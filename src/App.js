@@ -1,9 +1,17 @@
-import logo from './logo.svg';
 import './App.css';
+import {BrowserRouter, Route, Routes} from "react-router-dom";
+import HomeScreen from "./assistan/homeScreen/main/homeScreen";
+import GameSetup from "./assistan/imperium/main/gameSetup_tmp";
 
 function App() {
   return (
-    <div className="App">
+      <BrowserRouter>
+        <Routes>
+            <Route path={"/"} element={<HomeScreen/>} />
+            <Route path={"/imperium/"} element={<GameSetup/>} />
+        </Routes>
+      </BrowserRouter>
+    /*<div className="App">
       <header className="App-header">
         <img src={logo} className="App-logo" alt="logo" />
         <p>
@@ -18,7 +26,7 @@ function App() {
           Learn React
         </a>
       </header>
-    </div>
+    </div>*/
   );
 }
 
