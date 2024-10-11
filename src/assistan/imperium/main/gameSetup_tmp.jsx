@@ -70,7 +70,9 @@ class GameSetup_tmp extends Component {
         }
     }
 
-    /*render() {
+
+    /*
+    render() {
         return(
             <>
                 <div className="container mx-auto p-4" style={{backgroundColor: '#d9d9f2'}}>
