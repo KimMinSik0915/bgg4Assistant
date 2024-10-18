@@ -23,11 +23,14 @@ class HomeScreen extends Component {
     handler = {
         onClick : {
             actionIcon : (e) => {
+
                 const currentId = e.currentTarget.id;
                 switch (currentId) {
                     case 'imperium' :
                         this.props.navigate('/imperium');
                         break;
+                    case 'bandu' :
+                        this.props.navigate('/bandu');
                     default :
                         console.log('executed default');
                         break;

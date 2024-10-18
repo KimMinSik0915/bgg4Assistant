@@ -1,6 +1,6 @@
 // components/Popup.js
 import React from 'react';
-import {Button} from "../util/util";
+import {Button} from "../util/Util";
 
 const Popup = ({ isOpen, onClose, title, children }) => {
     if (!isOpen) return null;

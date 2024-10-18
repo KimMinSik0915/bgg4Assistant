@@ -1,6 +1,6 @@
 import React from 'react';
 import { PlusCircle, MinusCircle, ArrowRightCircle } from 'lucide-react';
-import {Button} from "../util/util";
+import {Button} from "../util/Util";
 
 const ResourceControl = ({ label, value, onIncrement, onDecrement, onConvert }) => (
     <div className="flex items-center space-x-2 mb-2">

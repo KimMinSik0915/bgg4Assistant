@@ -1,6 +1,6 @@
 import React from 'react';
 import { Shuffle } from 'lucide-react';
-import {Button} from "../util/util";
+import {Button} from "../util/Util";
 
 const PlayerSetup = ({ index, player, onTypeChange, onNationChange, onRandomNation, onNameChange, availableNations }) => (
     <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-4 mb-4 p-4 border rounded-lg bg-white">

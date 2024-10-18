@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Settings, Crown } from 'lucide-react';
-import {Button} from "../util/util";
+import {Button} from "../util/Util";
 import Popup from "../popup/popup";
-import ResourceControl from "./resourceController";
+import ResourceControl from "./ResourceController";
 
 const PlayerGameState = ({ player, index, onUpdateResources, onSettingsAction }) => {
     const [isPopupOpen, setIsPopupOpen] = useState(false);
