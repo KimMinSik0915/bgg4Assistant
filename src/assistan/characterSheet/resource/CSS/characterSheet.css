@@ -1,0 +1,32 @@
+/* 원본 HTML/CSS 프로토타입의 keyframe 애니메이션을 그대로 이식 */
+
+@keyframes cs-screen-damage {
+    0%   { background-color: var(--bg-color); transform: translate(0, 0); }
+    10%  { background-color: var(--hit-from); transform: translate(-6px, 4px); }
+    30%  { background-color: var(--hit-to); transform: translate(6px, -4px); }
+    50%  { background-color: var(--hit-from); transform: translate(-4px, -2px); }
+    70%  { background-color: var(--hit-to); transform: translate(4px, 2px); }
+    100% { background-color: var(--bg-color); transform: translate(0, 0); }
+}
+
+.cs-hit-effect {
+    animation: cs-screen-damage 0.4s ease-in-out;
+}
+
+@keyframes cs-dice-shake {
+    0%   { transform: rotate(0deg) scale(1); }
+    25%  { transform: rotate(10deg) scale(1.1); }
+    50%  { transform: rotate(0deg) scale(1); }
+    75%  { transform: rotate(-10deg) scale(1.1); }
+    100% { transform: rotate(0deg) scale(1); }
+}
+
+.cs-dice-rolling {
+    animation: cs-dice-shake 0.15s infinite;
+    background-color: var(--highlight) !important;
+}
+
+.cs-checkbox-used:has(input:checked) {
+    opacity: 0.4;
+    text-decoration: line-through;
+}

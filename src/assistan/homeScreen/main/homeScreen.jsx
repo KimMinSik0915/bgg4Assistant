@@ -9,7 +9,7 @@ const bgg4AssistantIcoPath="/bgg4Assistant_ico.webp";
 /**
  * @Author : 김민식
  * homeScreen : 메인 페이지
-*/
+ */
 class HomeScreen extends Component {
 
     state = {
@@ -31,6 +31,10 @@ class HomeScreen extends Component {
                         break;
                     case 'bandu' :
                         this.props.navigate('/bandu');
+                        break;
+                    case 'character-sheet' :
+                        this.props.navigate('/character-sheet');
+                        break;
                     default :
                         console.log('executed default');
                         break;
