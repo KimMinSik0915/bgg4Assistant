@@ -3,10 +3,14 @@
  * GmChatPanel : Gemini와 대화하며 캐릭터 시트를 관리하는 AI GM 채팅 카드
  */
 const GmChatPanel = ({
-    apiKey, model, onChangeApiKey, onChangeModel, showSettings, onToggleSettings
-  , messages, inputValue, onChangeInput, onSend, isLoading
-  , attachedFiles, onAttachFile, onRemoveAttachment
-}) => {
+                         apiKey, model, onChangeApiKey, onChangeModel, showSettings, onToggleSettings
+                         , onExportLogs // 📥 추가된 대화 내역 TXT 추출 프롭
+                         , messages, inputValue, onChangeInput, onSend, isLoading
+                         , attachedFiles, onAttachFile, onRemoveAttachment
+                         // 🔗 추가된 외부 URL 관련 Props
+                         , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
+                         , onChangeScenarioUrl, onChangeMapUrl1, onChangeMapUrl2, onLoadScenario
+                     }) => {
     const handleKeyDown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -21,15 +25,29 @@ const GmChatPanel = ({
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}
             >
                 <span>🎲 AI GM 채팅 (Gemini)</span>
-                <button
-                    onClick={onToggleSettings}
-                    className="text-xs font-normal px-2 py-1 rounded"
-                    style={{ color : 'var(--text-muted)', border : '1px solid var(--border-color)' }}
-                >⚙️ 설정</button>
+
+                {/* 🔘 설정 및 추출하기 버튼 영역 */}
+                <div className="flex gap-1.5 items-center">
+                    <button
+                        onClick={onExportLogs}
+                        className="text-xs font-normal px-2 py-1 rounded hover:opacity-80 transition-opacity"
+                        style={{ color : 'var(--text-muted)', border : '1px solid var(--border-color)' }}
+                        title="대화 내역을 TXT 파일로 다운로드"
+                    >
+                        📄 추출하기
+                    </button>
+                    <button
+                        onClick={onToggleSettings}
+                        className="text-xs font-normal px-2 py-1 rounded hover:opacity-80 transition-opacity"
+                        style={{ color : 'var(--text-muted)', border : '1px solid var(--border-color)' }}
+                    >
+                        ⚙️ 설정
+                    </button>
+                </div>
             </div>
 
             {showSettings && (
-                <div className="mb-3 p-2.5 rounded-lg flex flex-col gap-2 border" style={{ borderColor : 'var(--border-color)', backgroundColor : 'rgba(0,0,0,0.2)' }}>
+                <div className="mb-3 p-2.5 rounded-lg flex flex-col gap-2.5 border" style={{ borderColor : 'var(--border-color)', backgroundColor : 'rgba(0,0,0,0.2)' }}>
                     <label className="text-xs font-bold" style={{ color : 'var(--text-muted)' }}>
                         Gemini API 키
                         <input
@@ -41,20 +59,75 @@ const GmChatPanel = ({
                             style={{ borderColor : 'var(--border-color)' }}
                         />
                     </label>
+
                     <label className="text-xs font-bold" style={{ color : 'var(--text-muted)' }}>
                         모델
                         <input
                             type="text"
                             value={model}
                             onChange={(e) => onChangeModel(e.target.value)}
-                            placeholder="gemini-3.6-flash"
+                            placeholder="gemini-2.5-flash"
                             className="w-full mt-1 rounded-md p-2 text-xs border bg-[var(--input-bg)] text-[var(--input-text)]"
                             style={{ borderColor : 'var(--border-color)' }}
                         />
                     </label>
-                    <div className="text-[0.65rem] leading-snug" style={{ color : 'var(--text-muted)' }}>
-                        ⚠️ API 키는 이 브라우저(localStorage)에만 저장됩니다. 개인 로컬 사용은
-                        문제없지만, 배포된 사이트에 올리면 누구나 볼 수 있으니 주의하세요.
+
+                    {/* 📜 시나리오 JSON URL 및 로드 버튼 */}
+                    <div className="pt-2 border-t flex flex-col gap-1" style={{ borderColor : 'rgba(255,255,255,0.1)' }}>
+                        <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold" style={{ color : 'var(--text-muted)' }}>시나리오 JSON Raw URL</span>
+                            {scenarioData && (
+                                <span className="text-[0.65rem] font-bold" style={{ color : 'var(--clickable)' }}>✓ 로드 완료</span>
+                            )}
+                        </div>
+                        <div className="flex gap-1.5">
+                            <input
+                                type="text"
+                                value={scenarioUrl || ''}
+                                onChange={(e) => onChangeScenarioUrl(e.target.value)}
+                                placeholder="https://raw.githubusercontent.com/.../scenario.json"
+                                className="flex-1 rounded-md p-2 text-xs border bg-[var(--input-bg)] text-[var(--input-text)]"
+                                style={{ borderColor : 'var(--border-color)' }}
+                            />
+                            <button
+                                onClick={onLoadScenario}
+                                disabled={isFetchLoading || !scenarioUrl}
+                                className="text-white font-bold text-xs px-3 py-1.5 rounded-md disabled:opacity-40"
+                                style={{ backgroundColor : 'var(--highlight)' }}
+                            >
+                                {isFetchLoading ? '불러오는 중...' : '로드'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 🗺️ 지도 1 URL */}
+                    <label className="text-xs font-bold" style={{ color : 'var(--text-muted)' }}>
+                        지도 1 URL (예: 크로커 동굴 지도)
+                        <input
+                            type="text"
+                            value={mapUrl1 || ''}
+                            onChange={(e) => onChangeMapUrl1(e.target.value)}
+                            placeholder="https://raw.githubusercontent.com/.../map1.jpg"
+                            className="w-full mt-1 rounded-md p-2 text-xs border bg-[var(--input-bg)] text-[var(--input-text)]"
+                            style={{ borderColor : 'var(--border-color)' }}
+                        />
+                    </label>
+
+                    {/* 🗺️ 지도 2 URL */}
+                    <label className="text-xs font-bold" style={{ color : 'var(--text-muted)' }}>
+                        지도 2 URL (예: 살스볼트 지도)
+                        <input
+                            type="text"
+                            value={mapUrl2 || ''}
+                            onChange={(e) => onChangeMapUrl2(e.target.value)}
+                            placeholder="https://raw.githubusercontent.com/.../map2.jpg"
+                            className="w-full mt-1 rounded-md p-2 text-xs border bg-[var(--input-bg)] text-[var(--input-text)]"
+                            style={{ borderColor : 'var(--border-color)' }}
+                        />
+                    </label>
+
+                    <div className="text-[0.65rem] leading-snug mt-1" style={{ color : 'var(--text-muted)' }}>
+                        ⚠️ API 키는 브라우저(localStorage)에만 저장됩니다. URL을 입력하고 [로드]를 누르면 시나리오 및 지도 정보가 AI GM의 컨텍스트로 자동 전달됩니다.
                     </div>
                 </div>
             )}
