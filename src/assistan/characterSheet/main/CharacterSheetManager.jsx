@@ -27,7 +27,9 @@ const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 class CharacterSheetManager extends Component {
 
     state = {
-        isUploadActive : false   // 🔥 캐릭터 Data 로드 영역 활성화/비활성화 상태
+        activeTab: 'chat'        // 🔥 메인 탭 ('chat': GM 대화 / 'sheet': 캐릭터 시트)
+      , sheetSubTab: 'abilities' // 🔥 캐릭터 시트 서브 탭 ('abilities', 'spells', 'skills', 'equipment', 'traits', 'inventory')
+      , isUploadActive : false
       , rawInput : ''
       , charData : null
       , themeKey : THEME_KEYS.CLASSIC
@@ -46,12 +48,12 @@ class CharacterSheetManager extends Component {
       , gmInput : ''
       , isGmLoading : false
       , gmAttachments : []
-      , scenarioUrl: ''        // 시나리오 JSON Raw URL
-      , mapUrl1: ''            // 지도 1 URL (예: 크로커 동굴 지도)
-      , mapUrl2: ''            // 지도 2 URL (예: 살스볼트 지도)
-      , scenarioData: null     // fetch로 가져온 시나리오 객체
-      , isFetchLoading: false  // 시나리오 로딩 상태
-      , fetchError: null       // 로딩 에러
+      , scenarioUrl: ''
+      , mapUrl1: ''
+      , mapUrl2: ''
+      , scenarioData: null
+      , isFetchLoading: false
+      , fetchError: null
     }
 
     constructor(props) {
@@ -78,8 +80,13 @@ class CharacterSheetManager extends Component {
     }
 
     handler = {
-        // 🔥 업로드 영역 토글 핸들러
-        toggleUploadActive : () => {
+        changeTab : (tab) => {
+            this.setState({ activeTab : tab });
+        }
+      , changeSheetSubTab : (subTab) => {
+            this.setState({ sheetSubTab : subTab });
+        }
+      , toggleUploadActive : () => {
             this.setState(prev => ({ isUploadActive : !prev.isUploadActive }));
         }
       , changeRawInput : (value) => {
@@ -203,8 +210,6 @@ class CharacterSheetManager extends Component {
       , showEquipInfo : (slotName, item) => {
             this.setState({ resultText : `[${slotName}] ${item.name}: ${item.desc}` });
         }
-
-      // --- AI GM 채팅 & 외부 URL 설정 ---
       , changeScenarioUrl : (value) => {
             this.setState({ scenarioUrl : value });
         }
@@ -281,8 +286,6 @@ class CharacterSheetManager extends Component {
       , removeGmAttachment : (index) => {
             this.setState(prev => ({ gmAttachments : prev.gmAttachments.filter((_, i) => i !== index) }));
         }
-
-      // 📥 🔥 AI GM 대화 내역 TXT 추출 다운로드 기능
       , exportChatLogs : () => {
             const { gmMessages, charData } = this.state;
             if (!gmMessages || gmMessages.length === 0) {
@@ -306,7 +309,6 @@ class CharacterSheetManager extends Component {
                 content += `[${sender}]\n${msg.text}\n\n`;
             });
 
-            // 한글 깨짐 방지 UTF-8 BOM(\uFEFF) 추가
             const blob = new Blob(['\uFEFF' + content], { type: 'text/plain;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -548,12 +550,21 @@ class CharacterSheetManager extends Component {
 
     render() {
         const {
-            isUploadActive, rawInput, charData, themeKey, inspiration, usedFeatures, usedSpellSlots
+            activeTab, sheetSubTab, isUploadActive, rawInput, charData, themeKey, inspiration, usedFeatures, usedSpellSlots
           , selectedSides, diceValue, isRolling, resultText, hitEffectKey
           , geminiApiKey, geminiModel, showGmSettings, gmMessages, gmInput, isGmLoading, gmAttachments
           , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
         } = this.state;
         const themeVars = themeToCssVars(themeKey);
+
+        const subTabList = [
+            { id: 'abilities', label: '🏋️ 능력치' },
+            { id: 'spells', label: '✨ 주문 & 특성' },
+            { id: 'skills', label: '🎯 숙련 기술' },
+            { id: 'equipment', label: '⚔️ 장비 착용' },
+            { id: 'traits', label: '🧬 종족 & 배경 특성' },
+            { id: 'inventory', label: '🎒 소지품 & 결점' },
+        ];
 
         return (
             <div
@@ -586,78 +597,157 @@ class CharacterSheetManager extends Component {
 
                     {charData && (
                         <>
-                            <CharacterHeaderCard
-                                charData={charData}
-                                inspiration={inspiration}
-                                onToggleInspiration={this.handler.toggleInspiration}
-                            />
-                            <GmChatPanel
-                                apiKey={geminiApiKey}
-                                model={geminiModel}
-                                onChangeApiKey={this.handler.changeGeminiApiKey}
-                                onChangeModel={this.handler.changeGeminiModel}
-                                showSettings={showGmSettings}
-                                onToggleSettings={this.handler.toggleGmSettings}
-                                onExportLogs={this.handler.exportChatLogs} // 🔥 추출하기 핸들러 전달
-                                messages={gmMessages}
-                                inputValue={gmInput}
-                                onChangeInput={this.handler.changeGmInput}
-                                onSend={this.sendGmMessage}
-                                isLoading={isGmLoading}
-                                attachedFiles={gmAttachments}
-                                onAttachFile={this.handler.attachGmFile}
-                                onRemoveAttachment={this.handler.removeGmAttachment}
+                            {/* 📌 메인 탭 */}
+                            <div className="flex border-b border-[var(--border-color)] mb-1">
+                                <button
+                                    type="button"
+                                    onClick={() => this.handler.changeTab('chat')}
+                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1.5 ${
+                                        activeTab === 'chat'
+                                            ? 'border-[var(--accent-color)] text-[var(--accent-color)] bg-[var(--card-bg)] rounded-t-lg'
+                                            : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                                    }`}
+                                >
+                                    <span>🎲</span>
+                                    <span>GM 과의 대화</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => this.handler.changeTab('sheet')}
+                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1.5 ${
+                                        activeTab === 'sheet'
+                                            ? 'border-[var(--accent-color)] text-[var(--accent-color)] bg-[var(--card-bg)] rounded-t-lg'
+                                            : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                                    }`}
+                                >
+                                    <span>📜</span>
+                                    <span>캐릭터 시트</span>
+                                </button>
+                            </div>
 
-                                scenarioUrl={scenarioUrl}
-                                mapUrl1={mapUrl1}
-                                mapUrl2={mapUrl2}
-                                isFetchLoading={isFetchLoading}
-                                scenarioData={scenarioData}
-                                onChangeScenarioUrl={this.handler.changeScenarioUrl}
-                                onChangeMapUrl1={this.handler.changeMapUrl1}
-                                onChangeMapUrl2={this.handler.changeMapUrl2}
-                                onLoadScenario={this.handler.handleLoadScenario}
-                            />
-                            <HpCard
-                                hp={charData.hp}
-                                onChangeHp={this.handler.changeHp}
-                                onTakeDamage={this.handler.takeDamagePrompt}
-                                onShortRest={this.handler.shortRest}
-                                onLongRest={this.handler.longRest}
-                            />
-                            <AbilitiesCard
-                                stats={charData.stats}
-                                proficiencyBonus={charData.proficiencyBonus}
-                                spellDC={charData.spellDC}
-                                spellAttackBonus={charData.spellAttackBonus}
-                                onRollCheck={this.handler.rollCheck}
-                            />
-                            <SpellsAndFeaturesCard
-                                specialFeatures={charData.specialFeatures}
-                                usedFeatures={usedFeatures}
-                                onToggleUsed={this.handler.toggleUsedFeature}
-                                spellSlots={charData.spellSlots}
-                                usedSpellSlots={usedSpellSlots}
-                                onToggleSpellSlot={this.handler.toggleSpellSlot}
-                                cantrips={charData.cantrips}
-                                preparedSpells={charData.preparedSpells}
-                                onRollSpell={this.handler.rollSpell}
-                            />
-                            <SkillsCard
-                                skills={charData.skills}
-                                onRollCheck={this.handler.rollCheck}
-                            />
-                            <EquipmentCard
-                                equipmentSlots={charData.equipmentSlots}
-                                onRollDamage={this.handler.rollWeaponDamage}
-                                onShowInfo={this.handler.showEquipInfo}
-                            />
-                            <TraitsAndInventoryCard
-                                traits={charData.traits}
-                                languages={charData.languages}
-                                inventory={charData.inventory}
-                                flaw={charData.flaw}
-                            />
+                            {/* 💬 1. GM 과의 대화 탭 */}
+                            {activeTab === 'chat' && (
+                                <GmChatPanel
+                                    apiKey={geminiApiKey}
+                                    model={geminiModel}
+                                    onChangeApiKey={this.handler.changeGeminiApiKey}
+                                    onChangeModel={this.handler.changeGeminiModel}
+                                    showSettings={showGmSettings}
+                                    onToggleSettings={this.handler.toggleGmSettings}
+                                    onExportLogs={this.handler.exportChatLogs}
+                                    messages={gmMessages}
+                                    inputValue={gmInput}
+                                    onChangeInput={this.handler.changeGmInput}
+                                    onSend={this.sendGmMessage}
+                                    isLoading={isGmLoading}
+                                    attachedFiles={gmAttachments}
+                                    onAttachFile={this.handler.attachGmFile}
+                                    onRemoveAttachment={this.handler.removeGmAttachment}
+
+                                    scenarioUrl={scenarioUrl}
+                                    mapUrl1={mapUrl1}
+                                    mapUrl2={mapUrl2}
+                                    isFetchLoading={isFetchLoading}
+                                    scenarioData={scenarioData}
+                                    onChangeScenarioUrl={this.handler.changeScenarioUrl}
+                                    onChangeMapUrl1={this.handler.changeMapUrl1}
+                                    onChangeMapUrl2={this.handler.changeMapUrl2}
+                                    onLoadScenario={this.handler.handleLoadScenario}
+                                />
+                            )}
+
+                            {/* 📜 2. 캐릭터 시트 탭 */}
+                            {activeTab === 'sheet' && (
+                                <>
+                                    {/* 🔴 헤더 & 체력 카드 */}
+                                    <CharacterHeaderCard
+                                        charData={charData}
+                                        inspiration={inspiration}
+                                        onToggleInspiration={this.handler.toggleInspiration}
+                                    />
+                                    <HpCard
+                                        hp={charData.hp}
+                                        onChangeHp={this.handler.changeHp}
+                                        onTakeDamage={this.handler.takeDamagePrompt}
+                                        onShortRest={this.handler.shortRest}
+                                        onLongRest={this.handler.longRest}
+                                    />
+
+                                    {/* 🔘 서브 탭 바 (자동 줄바꿈 flex-wrap 적용) */}
+                                    <div className="flex flex-wrap gap-1.5 pb-2 my-1 border-b" style={{ borderColor : 'var(--border-color)' }}>
+                                        {subTabList.map(tab => (
+                                            <button
+                                                key={tab.id}
+                                                type="button"
+                                                onClick={() => this.handler.changeSheetSubTab(tab.id)}
+                                                className={`px-2.5 py-1.5 text-xs font-bold rounded-md transition-all border ${
+                                                    sheetSubTab === tab.id
+                                                        ? 'bg-[var(--card-bg)] text-[var(--accent-color)] border-[var(--border-color)] shadow-sm'
+                                                        : 'bg-transparent text-[var(--text-muted)] border-transparent hover:text-[var(--text-main)] hover:bg-[rgba(255,255,255,0.05)]'
+                                                }`}
+                                            >
+                                                {tab.label}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* 📂 선택한 서브 탭 출력 */}
+                                    {sheetSubTab === 'abilities' && (
+                                        <AbilitiesCard
+                                            stats={charData.stats}
+                                            proficiencyBonus={charData.proficiencyBonus}
+                                            spellDC={charData.spellDC}
+                                            spellAttackBonus={charData.spellAttackBonus}
+                                            onRollCheck={this.handler.rollCheck}
+                                        />
+                                    )}
+
+                                    {sheetSubTab === 'spells' && (
+                                        <SpellsAndFeaturesCard
+                                            specialFeatures={charData.specialFeatures}
+                                            usedFeatures={usedFeatures}
+                                            onToggleUsed={this.handler.toggleUsedFeature}
+                                            spellSlots={charData.spellSlots}
+                                            usedSpellSlots={usedSpellSlots}
+                                            onToggleSpellSlot={this.handler.toggleSpellSlot}
+                                            cantrips={charData.cantrips}
+                                            preparedSpells={charData.preparedSpells}
+                                            onRollSpell={this.handler.rollSpell}
+                                        />
+                                    )}
+
+                                    {sheetSubTab === 'skills' && (
+                                        <SkillsCard
+                                            skills={charData.skills}
+                                            onRollCheck={this.handler.rollCheck}
+                                        />
+                                    )}
+
+                                    {sheetSubTab === 'equipment' && (
+                                        <EquipmentCard
+                                            equipmentSlots={charData.equipmentSlots}
+                                            onRollDamage={this.handler.rollWeaponDamage}
+                                            onShowInfo={this.handler.showEquipInfo}
+                                        />
+                                    )}
+
+                                    {sheetSubTab === 'traits' && (
+                                        <TraitsAndInventoryCard
+                                            mode="traits"
+                                            traits={charData.traits}
+                                            languages={charData.languages}
+                                        />
+                                    )}
+
+                                    {sheetSubTab === 'inventory' && (
+                                        <TraitsAndInventoryCard
+                                            mode="inventory"
+                                            inventory={charData.inventory}
+                                            flaw={charData.flaw}
+                                        />
+                                    )}
+                                </>
+                            )}
                         </>
                     )}
                 </div>

@@ -4,10 +4,9 @@
  */
 const GmChatPanel = ({
                          apiKey, model, onChangeApiKey, onChangeModel, showSettings, onToggleSettings
-                         , onExportLogs // 📥 추가된 대화 내역 TXT 추출 프롭
+                         , onExportLogs
                          , messages, inputValue, onChangeInput, onSend, isLoading
                          , attachedFiles, onAttachFile, onRemoveAttachment
-                         // 🔗 추가된 외부 URL 관련 Props
                          , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
                          , onChangeScenarioUrl, onChangeMapUrl1, onChangeMapUrl2, onLoadScenario
                      }) => {
@@ -26,7 +25,6 @@ const GmChatPanel = ({
             >
                 <span>🎲 AI GM 채팅 (Gemini)</span>
 
-                {/* 🔘 설정 및 추출하기 버튼 영역 */}
                 <div className="flex gap-1.5 items-center">
                     <button
                         onClick={onExportLogs}
@@ -132,19 +130,20 @@ const GmChatPanel = ({
                 </div>
             )}
 
+            {/* 💬 대화창 높이를 260px -> 480px로 넓혀 가독성 대폭 향상 */}
             <div
-                className="rounded-lg p-2 mb-2 overflow-y-auto flex flex-col gap-2"
-                style={{ maxHeight : '260px', backgroundColor : 'rgba(0,0,0,0.25)' }}
+                className="rounded-lg p-3 mb-3 overflow-y-auto flex flex-col gap-2.5"
+                style={{ maxHeight : '780px', minHeight : '600px', backgroundColor : 'rgba(0,0,0,0.25)' }}
             >
                 {messages.length === 0 && (
-                    <div className="text-xs text-center py-4" style={{ color : 'var(--text-muted)' }}>
+                    <div className="text-xs text-center py-8" style={{ color : 'var(--text-muted)' }}>
                         GM에게 말을 걸어보세요. (예: "방에 들어서자 무슨 일이 벌어지나요?")
                     </div>
                 )}
                 {messages.map((m, i) => (
                     <div
                         key={i}
-                        className={`text-xs rounded-md px-2.5 py-1.5 max-w-[85%] whitespace-pre-wrap ${m.role === 'user' ? 'self-end text-white' : 'self-start'}`}
+                        className={`text-xs rounded-md px-3 py-2 max-w-[85%] whitespace-pre-wrap leading-relaxed ${m.role === 'user' ? 'self-end text-white' : 'self-start'}`}
                         style={
                             m.role === 'user'
                                 ? { backgroundColor : 'var(--accent-color)' }
@@ -157,7 +156,7 @@ const GmChatPanel = ({
                     </div>
                 ))}
                 {isLoading && (
-                    <div className="text-xs self-start" style={{ color : 'var(--text-muted)' }}>GM이 생각하는 중...</div>
+                    <div className="text-xs self-start italic animate-pulse" style={{ color : 'var(--text-muted)' }}>GM이 생각하는 중...</div>
                 )}
             </div>
 
@@ -190,14 +189,14 @@ const GmChatPanel = ({
                     onChange={(e) => onChangeInput(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder="GM에게 메시지 보내기..."
-                    rows={1}
+                    rows={2}
                     className="flex-1 rounded-md p-2 text-xs border resize-none bg-[var(--input-bg)] text-[var(--input-text)]"
                     style={{ borderColor : 'var(--border-color)' }}
                 />
                 <button
                     onClick={onSend}
                     disabled={isLoading || !apiKey}
-                    className="text-white font-bold text-xs px-3 py-2 rounded-md disabled:opacity-40"
+                    className="text-white font-bold text-xs px-3.5 py-3 rounded-md disabled:opacity-40"
                     style={{ backgroundColor : 'var(--highlight)' }}
                 >전송</button>
             </div>
