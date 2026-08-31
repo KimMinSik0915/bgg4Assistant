@@ -2,6 +2,8 @@ import { Component } from "react";
 import withNavigate from "../../utils/withNavigate";
 import { normalizeCharacterData } from "../util/normalizeCharacterData";
 import { THEME_KEYS, themeToCssVars } from "../resource/dataSet/themes";
+import { gmTools } from "../resource/dataSet/gmTools";
+import { callGemini, splitResponseParts, userContent, functionResponsePart } from "../service/geminiService";
 import SheetLoader from "../component/SheetLoader";
 import CharacterHeaderCard from "../component/CharacterHeaderCard";
 import HpCard from "../component/HpCard";
@@ -10,8 +12,13 @@ import SpellsAndFeaturesCard from "../component/SpellsAndFeaturesCard";
 import SkillsCard from "../component/SkillsCard";
 import EquipmentCard from "../component/EquipmentCard";
 import TraitsAndInventoryCard from "../component/TraitsAndInventoryCard";
+import GmChatPanel from "../component/GmChatPanel";
 import DicePanel from "../component/DicePanel";
 import "../resource/CSS/characterSheet.css";
+
+const GEMINI_KEY_STORAGE = 'cs_gemini_api_key';
+const GEMINI_MODEL_STORAGE = 'cs_gemini_model';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
 
 /**
  * @Author : 김민식
@@ -19,6 +26,7 @@ import "../resource/CSS/characterSheet.css";
  *  - 최신 HTML/CSS 프로토타입(주문 슬롯/캔트립/준비된 주문 포함)의 렌더링 구조를 이식
  *  - 파일 업로드 및 주사위 굴림 로직은 기존 React 구현을 그대로 유지
  *  - 색상은 클래식(원본 다크 테마) / 앱(React 소스 라이트 테마) 두 가지로 전환 가능
+ *  - Gemini API를 붙여 "AI GM 채팅"으로 시트를 조작할 수 있는 기능 추가
  */
 class CharacterSheetManager extends Component {
 
@@ -34,13 +42,34 @@ class CharacterSheetManager extends Component {
       , isRolling : false
       , resultText : '파일을 업로드하여 시작하세요!'
       , hitEffectKey : 0
+      , geminiApiKey : ''
+      , geminiModel : DEFAULT_GEMINI_MODEL
+      , showGmSettings : false
+      , gmMessages : []
+      , gmInput : ''
+      , isGmLoading : false
+      , gmAttachments : []
     }
 
     constructor(props) {
         super(props);
+        this.gmHistory = []; // Gemini에 매 턴 전송하는 대화 원본(contents) - 렌더링과 무관해 state 밖에서 관리
     }
 
     rollTimer = null;
+
+    componentDidMount() {
+        const savedKey = window.localStorage.getItem(GEMINI_KEY_STORAGE);
+        let savedModel = window.localStorage.getItem(GEMINI_MODEL_STORAGE);
+        // 이전 기본값(gemini-2.5-flash)을 그대로 저장해둔 경우, 안 되는 모델이니 새 기본값으로 이관
+        if (savedModel === 'gemini-2.5-flash') savedModel = null;
+        if (savedKey || savedModel) {
+            this.setState({
+                geminiApiKey : savedKey || ''
+              , geminiModel : savedModel || DEFAULT_GEMINI_MODEL
+            });
+        }
+    }
 
     componentWillUnmount() {
         if (this.rollTimer) clearInterval(this.rollTimer);
@@ -171,6 +200,50 @@ class CharacterSheetManager extends Component {
       , showEquipInfo : (slotName, item) => {
             this.setState({ resultText : `[${slotName}] ${item.name}: ${item.desc}` });
         }
+
+      // --- AI GM 채팅 (Gemini) ---
+      , changeGeminiApiKey : (value) => {
+            this.setState({ geminiApiKey : value });
+            window.localStorage.setItem(GEMINI_KEY_STORAGE, value);
+        }
+      , changeGeminiModel : (value) => {
+            this.setState({ geminiModel : value });
+            window.localStorage.setItem(GEMINI_MODEL_STORAGE, value);
+        }
+      , toggleGmSettings : () => {
+            this.setState(prev => ({ showGmSettings : !prev.showGmSettings }));
+        }
+      , changeGmInput : (value) => {
+            this.setState({ gmInput : value });
+        }
+      , attachGmFile : (event) => {
+            const files = Array.from(event.target.files || []);
+            event.target.value = '';
+            if (files.length === 0) return;
+
+            const oversized = files.filter(f => f.size > 15 * 1024 * 1024);
+            if (oversized.length > 0) {
+                alert(`다음 파일은 15MB를 초과해 첨부할 수 없습니다: ${oversized.map(f => f.name).join(', ')}`);
+            }
+
+            const validFiles = files.filter(f => f.size <= 15 * 1024 * 1024);
+            const readOne = (file) => new Promise(resolve => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    // "data:image/png;base64,...." 형태에서 순수 base64 부분만 추출
+                    const base64 = String(e.target.result).split(',')[1] || '';
+                    resolve({ name : file.name, mimeType : file.type, base64 });
+                };
+                reader.readAsDataURL(file);
+            });
+
+            Promise.all(validFiles.map(readOne)).then(newAttachments => {
+                this.setState(prev => ({ gmAttachments : [...prev.gmAttachments, ...newAttachments] }));
+            });
+        }
+      , removeGmAttachment : (index) => {
+            this.setState(prev => ({ gmAttachments : prev.gmAttachments.filter((_, i) => i !== index) }));
+        }
     }
 
     fnc = {
@@ -179,12 +252,14 @@ class CharacterSheetManager extends Component {
 
     applyCharData = (parsed) => {
         const charData = normalizeCharacterData(parsed);
+        this.gmHistory = []; // 새 캐릭터를 불러오면 GM과의 대화 맥락도 초기화
         this.setState({
             charData
           , inspiration : false
           , usedFeatures : {}
           , usedSpellSlots : {}
           , resultText : `${charData.name || '캐릭터'} 시트 렌더링 완료!`
+          , gmMessages : []
         });
     }
 
@@ -216,8 +291,116 @@ class CharacterSheetManager extends Component {
         }, 50);
     }
 
+    // GM 도구 호출을 즉시(애니메이션 없이) 처리하고, Gemini에게 돌려줄 결과 문자열을 만든다
+    runGmTool = (name, args = {}) => {
+        switch (name) {
+            case 'apply_damage' : {
+                const amount = Math.abs(Number(args.amount) || 0);
+                this.handler.changeHp(-amount);
+                this.setState(prev => ({ hitEffectKey : prev.hitEffectKey + 1 }));
+                return { summary : `💥 GM: ${amount} 피해 적용`, response : { appliedDamage : amount } };
+            }
+            case 'heal_hp' : {
+                const amount = Math.abs(Number(args.amount) || 0);
+                this.handler.changeHp(amount);
+                return { summary : `💚 GM: HP ${amount} 회복`, response : { healed : amount } };
+            }
+            case 'short_rest' : {
+                this.handler.shortRest();
+                return { summary : '☕ GM: 짧은 휴식 진행', response : { rested : 'short' } };
+            }
+            case 'long_rest' : {
+                this.handler.longRest();
+                return { summary : '⛺ GM: 긴 휴식 진행', response : { rested : 'long' } };
+            }
+            case 'roll_dice' : {
+                const sides = Number(args.sides) || 20;
+                const modifier = Number(args.modifier) || 0;
+                const raw = Math.floor(Math.random() * sides) + 1;
+                const total = raw + modifier;
+                const modStr = modifier > 0 ? ` (+${modifier})` : (modifier < 0 ? ` (${modifier})` : '');
+                this.setState({ selectedSides : sides, diceValue : total, resultText : `${args.label || '굴림'}: ${total} [주사위 ${raw}${modStr}]` });
+                return { summary : `🎲 GM: ${args.label || '굴림'} → ${total} (주사위 ${raw}${modStr})`, response : { raw, total } };
+            }
+            default :
+                return { summary : `⚠️ 알 수 없는 도구 호출: ${name}`, response : { error : 'unknown tool' } };
+        }
+    }
+
+    buildGmSystemInstruction = () => {
+        const c = this.state.charData;
+        const summary = {
+            name : c.name, class : c.class, race : c.race, level : c.level
+            , hp : c.hp, stats : c.stats, skills : c.skills, inventory : c.inventory
+        };
+        return [
+            JSON.stringify(summary)
+        ].join('\n');
+    }
+
+    sendGmMessage = async () => {
+        const { gmInput, geminiApiKey, geminiModel, charData, gmAttachments } = this.state;
+        if ((!gmInput.trim() && gmAttachments.length === 0) || !geminiApiKey || !charData || this.state.isGmLoading) return;
+
+        const userMessage = gmInput.trim();
+        this.gmHistory.push(userContent(userMessage, gmAttachments));
+        const displayText = gmAttachments.length > 0
+            ? `${userMessage}\n${gmAttachments.map(f => `📎 ${f.name}`).join('\n')}`
+            : userMessage;
+        this.setState(prev => ({
+            gmMessages : [...prev.gmMessages, { role : 'user', text : displayText }]
+          , gmInput : ''
+          , gmAttachments : []
+          , isGmLoading : true
+        }));
+
+        try {
+            const systemInstruction = this.buildGmSystemInstruction();
+            let data = await callGemini({
+                apiKey : geminiApiKey, model : geminiModel || DEFAULT_GEMINI_MODEL
+              , systemInstruction, contents : this.gmHistory, tools : gmTools
+            });
+            let { text, functionCalls, modelContent } = splitResponseParts(data);
+
+            // 함수 호출이 있으면 로컬에서 실행하고, 결과를 다시 모델에 보내 최종 답변을 받는다 (최대 3라운드)
+            let rounds = 0;
+            while (functionCalls.length > 0 && rounds < 2) {
+                this.gmHistory.push(modelContent);
+                const toolSummaries = [];
+                functionCalls.forEach(call => {
+                    const { summary, response } = this.runGmTool(call.name, call.args || {});
+                    toolSummaries.push(summary);
+                    this.gmHistory.push(functionResponsePart(call.name, response));
+                });
+                this.setState(prev => ({ gmMessages : [...prev.gmMessages, ...toolSummaries.map(s => ({ role : 'system', text : s }))] }));
+
+                data = await callGemini({
+                    apiKey : geminiApiKey, model : geminiModel || DEFAULT_GEMINI_MODEL
+                  , systemInstruction, contents : this.gmHistory, tools : gmTools
+                });
+                ({ text, functionCalls, modelContent } = splitResponseParts(data));
+                rounds++;
+            }
+
+            this.gmHistory.push(modelContent || { role : 'model', parts : [{ text }] });
+            this.setState(prev => ({
+                gmMessages : [...prev.gmMessages, { role : 'gm', text : text || '(GM이 응답하지 않았습니다)' }]
+              , isGmLoading : false
+            }));
+        } catch (err) {
+            this.setState(prev => ({
+                gmMessages : [...prev.gmMessages, { role : 'system', text : `⚠️ 오류: ${err.message}` }]
+              , isGmLoading : false
+            }));
+        }
+    }
+
     render() {
-        const { rawInput, charData, themeKey, inspiration, usedFeatures, usedSpellSlots, selectedSides, diceValue, isRolling, resultText, hitEffectKey } = this.state;
+        const {
+            rawInput, charData, themeKey, inspiration, usedFeatures, usedSpellSlots
+          , selectedSides, diceValue, isRolling, resultText, hitEffectKey
+          , geminiApiKey, geminiModel, showGmSettings, gmMessages, gmInput, isGmLoading, gmAttachments
+        } = this.state;
         const themeVars = themeToCssVars(themeKey);
 
         return (
@@ -242,6 +425,22 @@ class CharacterSheetManager extends Component {
                                 charData={charData}
                                 inspiration={inspiration}
                                 onToggleInspiration={this.handler.toggleInspiration}
+                            />
+                            <GmChatPanel
+                                apiKey={geminiApiKey}
+                                model={geminiModel}
+                                onChangeApiKey={this.handler.changeGeminiApiKey}
+                                onChangeModel={this.handler.changeGeminiModel}
+                                showSettings={showGmSettings}
+                                onToggleSettings={this.handler.toggleGmSettings}
+                                messages={gmMessages}
+                                inputValue={gmInput}
+                                onChangeInput={this.handler.changeGmInput}
+                                onSend={this.sendGmMessage}
+                                isLoading={isGmLoading}
+                                attachedFiles={gmAttachments}
+                                onAttachFile={this.handler.attachGmFile}
+                                onRemoveAttachment={this.handler.removeGmAttachment}
                             />
                             <HpCard
                                 hp={charData.hp}
