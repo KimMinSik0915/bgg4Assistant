@@ -177,18 +177,23 @@ class CharacterSheetManager extends Component {
                 }
             }
         }
+      // ☕ 짧은 휴식: 실제 캐릭터의 히트다이스 종류(예: 팔라딘 1d10, 사제 1d6)로 굴려서 회복.
+      // 대부분의 클래스는 주문 슬롯/특성이 긴 휴식에만 회복되므로 여기서는 건드리지 않는다.
       , shortRest : () => {
-            if (!this.state.charData?.hp) return;
-            const dieRoll = Math.floor(Math.random() * 6) + 1;
-            const conMod = this.state.charData.hp.conMod || 0;
+            const { charData } = this.state;
+            if (!charData?.hp) return;
+
+            const hitDiceMatch = String(charData.hp.hitDice || '1d6').match(/d(\d+)/i);
+            const sides = hitDiceMatch ? parseInt(hitDiceMatch[1], 10) : 6;
+            const dieRoll = Math.floor(Math.random() * sides) + 1;
+            const conMod = charData.hp.conMod || 0;
             const healAmount = dieRoll + conMod;
+
             this.handler.changeHp(healAmount);
             this.setState({
-                usedFeatures : {}
-              , usedSpellSlots : {}
-              , selectedSides : 6
+                selectedSides : sides
               , diceValue : healAmount
-              , resultText : `☕ 짧은 휴식: 1d6(${dieRoll}) + 건강(${conMod}) = ${healAmount} HP 회복!`
+              , resultText : `☕ 짧은 휴식: 1d${sides}(${dieRoll}) + 건강(${conMod}) = ${healAmount} HP 회복! (주문 슬롯·특성은 유지됩니다)`
             });
         }
       , longRest : () => {
@@ -210,7 +215,25 @@ class CharacterSheetManager extends Component {
       , rollWeaponDamage : (item) => {
             this.handler.rollCheck(`${item.name} 피해`, item.dice, 0);
         }
-      , rollSpell : (name, dice) => {
+      // 🔮 주문 시전: cantrip(consumesSlot=false)은 슬롯 없이 바로 굴림.
+      // 준비된 주문(consumesSlot=true)은 남은 슬롯 중 첫 번째 빈 슬롯을 자동으로 소모 처리한 뒤 굴림.
+      // 슬롯이 이미 다 소모됐으면 굴림 자체를 막고 안내만 띄운다 (긴 휴식 전까지 오시전 방지).
+      , rollSpell : (name, dice, consumesSlot) => {
+            if (consumesSlot) {
+                const totalSlots = this.state.charData?.spellSlots || 0;
+                const used = this.state.usedSpellSlots || {};
+                let freeIndex = null;
+                for (let i = 0; i < totalSlots; i++) {
+                    if (!used[i]) { freeIndex = i; break; }
+                }
+                if (totalSlots > 0 && freeIndex === null) {
+                    alert(`⚠️ ${name}: 사용 가능한 주문 슬롯이 없습니다! (휴식으로 회복하세요)`);
+                    return;
+                }
+                if (freeIndex !== null) {
+                    this.setState(prev => ({ usedSpellSlots : { ...prev.usedSpellSlots, [freeIndex] : true } }));
+                }
+            }
             this.handler.rollCheck(name, dice || 20, 0);
         }
       , showEquipInfo : (slotName, item) => {
@@ -343,9 +366,6 @@ class CharacterSheetManager extends Component {
         });
     }
 
-    // 실제 물리 엔진(@3d-dice/dice-box, 전역 캔버스)으로 화면 전체에 주사위를 던져 굴리고, 착지한
-    // 진짜 눈(raw)을 받아서 판정 텍스트를 만든다. 3D 엔진 로드에 실패하면 예전 방식(랜덤 폴백)으로
-    // 자연스럽게 대체한다 — 어느 쪽이든 사용자 경험(숫자가 나오고 결과 문구가 뜬다)은 동일하다.
     executeRoll = async (label, sides, mod) => {
         if (this.rollTimer) clearInterval(this.rollTimer);
         this.setState({ isRolling : true, resultText : '굴리는 중...' });
@@ -365,13 +385,9 @@ class CharacterSheetManager extends Component {
         }
 
         this.setState({ diceValue : total, isRolling : false, resultText });
-        // 🎲 이 물리 롤 결과를 전역 플로팅 위젯(Layout에 한 번 떠 있는 DicePanel)에 방송해서
-        // 화면 전체에 크게 보여준다 — 캐릭터 시트 트리 밖에 있는 컴포넌트라 props로는 못 넘긴다.
         announceDiceResult({ mode : 'single', sides, value : total, text : resultText });
     }
 
-    // 실제 물리 엔진(전역 캔버스, DICE_BOX_SELECTOR)으로 굴려서 눈을 받아온다. 실패 시 예전과 동일한
-    // "짧게 반짝이다 멈추는" 애니메이션 + Math.random() 폴백으로 이어간다.
     rollDiePhysically = (sides) => new Promise((resolve) => {
         rollPhysicalDie(DICE_BOX_SELECTOR, sides).then((value) => {
             if (typeof value === 'number') resolve(value);

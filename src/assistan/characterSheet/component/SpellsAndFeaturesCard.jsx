@@ -8,6 +8,10 @@ const SpellsAndFeaturesCard = ({
   , spellSlots, usedSpellSlots, onToggleSpellSlot
   , cantrips, preparedSpells, onRollSpell
 }) => {
+    // 남은 1레벨 슬롯이 있는지 계산 - 다 썼으면 준비된 주문 카드를 살짝 흐리게 표시해준다
+    const usedSlotCount = Object.values(usedSpellSlots || {}).filter(Boolean).length;
+    const noSlotsLeft = spellSlots > 0 && usedSlotCount >= spellSlots;
+
     return (
         <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md" style={{ borderColor : 'var(--border-color)' }}>
             <div
@@ -63,7 +67,7 @@ const SpellsAndFeaturesCard = ({
                     {cantrips.map((c, i) => (
                         <div
                             key={i}
-                            onClick={() => onRollSpell(c.name, c.dice)}
+                            onClick={() => onRollSpell(c.name, c.dice, false)}
                             className="pl-2.5 pr-2 py-2 mb-2 rounded-r-md border-l-[3px] cursor-pointer active:scale-[0.98] transition-transform bg-black/15"
                             style={{ borderColor : 'var(--accent-color)' }}
                         >
@@ -76,12 +80,15 @@ const SpellsAndFeaturesCard = ({
 
             {(preparedSpells || []).length > 0 && (
                 <div>
-                    <div className="text-xs font-bold mb-1" style={{ color : 'var(--accent-color)' }}>준비된 주문</div>
+                    <div className="text-xs font-bold mb-1 flex items-center justify-between" style={{ color : 'var(--accent-color)' }}>
+                        <span>준비된 주문</span>
+                        {noSlotsLeft && <span className="text-[0.65rem] font-normal" style={{ color : 'var(--text-muted)' }}>슬롯 소진 - 휴식 필요</span>}
+                    </div>
                     {preparedSpells.map((s, i) => (
                         <div
                             key={i}
-                            onClick={() => onRollSpell(s.name, s.dice)}
-                            className="pl-2.5 pr-2 py-2 mb-2 rounded-r-md border-l-[3px] cursor-pointer active:scale-[0.98] transition-transform bg-black/15"
+                            onClick={() => onRollSpell(s.name, s.dice, true)}
+                            className={`pl-2.5 pr-2 py-2 mb-2 rounded-r-md border-l-[3px] cursor-pointer active:scale-[0.98] transition-transform bg-black/15 ${noSlotsLeft ? 'opacity-40' : ''}`}
                             style={{ borderColor : 'var(--accent-color)' }}
                         >
                             <div className="flex justify-between items-center">
