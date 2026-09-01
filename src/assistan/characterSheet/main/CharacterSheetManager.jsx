@@ -1,6 +1,7 @@
 import { Component } from "react";
 import withNavigate from "../../utils/withNavigate";
 import { normalizeCharacterData } from "../util/normalizeCharacterData";
+import { buildExportJson, downloadJson, sanitizeFileName } from "../util/exportCharacterData";
 import { THEME_KEYS, themeToCssVars } from "../resource/dataSet/themes";
 import { gmTools } from "../resource/dataSet/gmTools";
 import { callGemini, splitResponseParts, userContent } from "../service/geminiService";
@@ -11,22 +12,29 @@ import AbilitiesCard from "../component/AbilitiesCard";
 import SpellsAndFeaturesCard from "../component/SpellsAndFeaturesCard";
 import SkillsCard from "../component/SkillsCard";
 import EquipmentCard from "../component/EquipmentCard";
-import TraitsAndInventoryCard from "../component/TraitsAndInventoryCard";
+import TraitsAndInventoryCard from "../component/TraitsCard";
 import BattleMapPanel from "../component/BattleMapPanel"; // 🔥 전투 지도 메인 탭 컴포넌트
 import GmChatPanel from "../component/GmChatPanel";
 import DicePanel from "../component/DicePanel";
 import "../resource/CSS/characterSheet.css";
+import TraitsCard from "../component/TraitsCard";
+import InventoryCard from "../component/InventoryCard";
 
 const GEMINI_KEY_STORAGE = 'cs_gemini_api_key';
 const GEMINI_MODEL_STORAGE = 'cs_gemini_model';
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
+/**
+ * @Author : 김민식
+ * CharacterSheetManager : D&D 5e 동적 캐릭터 시트
+ */
 class CharacterSheetManager extends Component {
 
     state = {
         activeTab: 'chat'        // 🔥 메인 탭 ('chat': GM 대화 / 'sheet': 캐릭터 시트 / 'map': 전투 지도)
       , sheetSubTab: 'abilities' // 캐릭터 시트 서브 탭
       , isUploadActive : false
+      , originalRawJson : null
       , rawInput : ''
       , charData : null
       , themeKey : THEME_KEYS.CLASSIC
@@ -85,6 +93,12 @@ class CharacterSheetManager extends Component {
         }
       , toggleUploadActive : () => {
             this.setState(prev => ({ isUploadActive : !prev.isUploadActive }));
+        }
+      , exportCharacter : () => {
+            const { originalRawJson, charData, inspiration, usedFeatures, usedSpellSlots } = this.state;
+            if (!charData) return;
+            const exportData = buildExportJson(originalRawJson, charData, { inspiration, usedFeatures, usedSpellSlots });
+            downloadJson(exportData, `${sanitizeFileName(charData.name)}_시트.json`);
         }
       , changeRawInput : (value) => {
             this.setState({ rawInput : value });
@@ -320,12 +334,14 @@ class CharacterSheetManager extends Component {
 
     applyCharData = (parsed) => {
         const charData = normalizeCharacterData(parsed);
+        const uiState = parsed?._sheetUiState || {}; // 내보내기(Export)했던 파일이면 체크 상태까지 복원
         this.gmHistory = [];
         this.setState({
             charData
-          , inspiration : false
-          , usedFeatures : {}
-          , usedSpellSlots : {}
+          , originalRawJson : parsed
+          , inspiration : !!uiState.inspiration
+          , usedFeatures : uiState.usedFeatures || {}
+          , usedSpellSlots : uiState.usedSpellSlots || {}
           , resultText : `${charData.name || '캐릭터'} 시트 렌더링 완료!`
           , gmMessages : []
           , isUploadActive : false
@@ -589,29 +605,31 @@ class CharacterSheetManager extends Component {
                             onFileUpload={this.handler.uploadFile}
                             themeKey={themeKey}
                             onChangeTheme={this.handler.changeTheme}
+                            onExport={this.handler.exportCharacter}
+                            canExport={!!charData}
                         />
                     )}
 
                     {charData && (
                         <>
-                            {/* 📌 메인 탭바 (3개 메인 탭) */}
+                            {/* 📌 메인 탭 */}
                             <div className="flex border-b border-[var(--border-color)] mb-1">
                                 <button
                                     type="button"
                                     onClick={() => this.handler.changeTab('chat')}
-                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1 ${
+                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1.5 ${
                                         activeTab === 'chat'
                                             ? 'border-[var(--accent-color)] text-[var(--accent-color)] bg-[var(--card-bg)] rounded-t-lg'
                                             : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]'
                                     }`}
                                 >
                                     <span>🎲</span>
-                                    <span>GM과의 대화</span>
+                                    <span>GM 과의 대화</span>
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => this.handler.changeTab('sheet')}
-                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1 ${
+                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1.5 ${
                                         activeTab === 'sheet'
                                             ? 'border-[var(--accent-color)] text-[var(--accent-color)] bg-[var(--card-bg)] rounded-t-lg'
                                             : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]'
@@ -682,7 +700,7 @@ class CharacterSheetManager extends Component {
                                         onLongRest={this.handler.longRest}
                                     />
 
-                                    {/* 🔘 서브 탭 바 */}
+                                    {/* 🔘 서브 탭 바 (자동 줄바꿈 flex-wrap 적용) */}
                                     <div className="flex flex-wrap gap-1.5 pb-2 my-1 border-b" style={{ borderColor : 'var(--border-color)' }}>
                                         {subTabList.map(tab => (
                                             <button
@@ -741,7 +759,7 @@ class CharacterSheetManager extends Component {
                                     )}
 
                                     {sheetSubTab === 'traits' && (
-                                        <TraitsAndInventoryCard
+                                        <TraitsCard
                                             mode="traits"
                                             traits={charData.traits}
                                             languages={charData.languages}
@@ -749,7 +767,7 @@ class CharacterSheetManager extends Component {
                                     )}
 
                                     {sheetSubTab === 'inventory' && (
-                                        <TraitsAndInventoryCard
+                                        <InventoryCard
                                             mode="inventory"
                                             inventory={charData.inventory}
                                             flaw={charData.flaw}

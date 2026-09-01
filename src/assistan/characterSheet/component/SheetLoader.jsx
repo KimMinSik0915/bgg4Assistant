@@ -4,7 +4,7 @@
  */
 import { themes } from "../resource/dataSet/themes";
 
-const SheetLoader = ({ rawInput, onChangeRawInput, onRender, onFileUpload, themeKey, onChangeTheme }) => {
+const SheetLoader = ({ rawInput, onChangeRawInput, onRender, onFileUpload, themeKey, onChangeTheme, onExport, canExport }) => {
     return (
         <div className="border border-dashed border-[var(--accent-color)] p-3 rounded-xl flex flex-col gap-2 bg-[var(--card-bg)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -44,7 +44,20 @@ const SheetLoader = ({ rawInput, onChangeRawInput, onRender, onFileUpload, theme
                     파일 업로드 (.json, .txt)
                     <input type="file" accept=".json,.txt" className="hidden" onChange={onFileUpload} />
                 </label>
+                <button
+                    onClick={onExport}
+                    disabled={!canExport}
+                    className="text-white font-bold text-xs px-3 py-2 rounded-md bg-[var(--clickable)] disabled:opacity-40"
+                    title={canExport ? '현재 시트 상태를 JSON 파일로 내보내기' : '먼저 캐릭터 시트를 불러오세요'}
+                >
+                    💾 내보내기 (Export)
+                </button>
             </div>
+            {!canExport && (
+                <div className="text-[0.65rem]" style={{ color : 'var(--text-muted)' }}>
+                    시트를 불러온 뒤에 현재 상태를 JSON으로 내보낼 수 있어요.
+                </div>
+            )}
         </div>
     );
 }
