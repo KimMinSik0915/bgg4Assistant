@@ -9,7 +9,7 @@ const SpellsAndFeaturesCard = ({
   , cantrips, preparedSpells, onRollSpell
 }) => {
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)]" style={{ borderColor : 'var(--border-color)' }}>
+        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md" style={{ borderColor : 'var(--border-color)' }}>
             <div
                 className="text-base font-bold pb-1.5 mb-3 border-b-2"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}
@@ -21,7 +21,7 @@ const SpellsAndFeaturesCard = ({
                 <div
                     key={i}
                     className="rounded-md p-2 mb-2 border"
-                    style={{ backgroundColor : 'rgba(139,92,246,0.08)', borderColor : 'var(--highlight)' }}
+                    style={{ backgroundColor : 'rgba(34,211,238,0.08)', borderColor : 'var(--highlight)' }}
                 >
                     <div className="flex justify-between items-center mb-1">
                         <strong className="text-sm" style={{ color : 'var(--highlight)' }}>{f.name}</strong>
@@ -37,10 +37,10 @@ const SpellsAndFeaturesCard = ({
             {spellSlots > 0 && (
                 <div
                     className="mb-3 rounded-lg p-2"
-                    style={{ backgroundColor : 'rgba(139,92,246,0.1)', border : '1px solid rgba(139,92,246,0.3)' }}
+                    style={{ backgroundColor : 'rgba(34,211,238,0.1)', border : '1px solid rgba(34,211,238,0.3)' }}
                 >
                     <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold" style={{ color : '#c4b5fd' }}>✨ 주문 슬롯</span>
+                        <span className="text-xs font-bold" style={{ color : '#a5f3fc' }}>✨ 주문 슬롯</span>
                         <div className="flex gap-1.5 flex-wrap justify-end">
                             {Array.from({ length : spellSlots }).map((_, i) => (
                                 <label

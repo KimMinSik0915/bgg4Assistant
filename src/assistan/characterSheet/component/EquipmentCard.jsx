@@ -15,7 +15,7 @@ const SLOT_DEF = [
 
 const EquipmentCard = ({ equipmentSlots, onRollDamage, onShowInfo }) => {
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)]" style={{ borderColor : 'var(--border-color)' }}>
+        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md" style={{ borderColor : 'var(--border-color)' }}>
             <div
                 className="text-base font-bold pb-1.5 mb-3 border-b-2"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}
@@ -42,7 +42,7 @@ const EquipmentCard = ({ equipmentSlots, onRollDamage, onShowInfo }) => {
                             key={s.key}
                             onClick={() => isWeapon ? onRollDamage(item) : onShowInfo(s.type, item)}
                             className="rounded-lg border p-2 flex items-center gap-2.5 cursor-pointer active:scale-95 transition-transform bg-black/25"
-                            style={{ borderColor : 'rgba(139,92,246,0.6)', backgroundColor : 'rgba(139,92,246,0.05)' }}
+                            style={{ borderColor : 'rgba(34,211,238,0.6)', backgroundColor : 'rgba(34,211,238,0.05)' }}
                         >
                             <div className="w-8 h-8 rounded-md flex items-center justify-center text-lg bg-white/5 flex-shrink-0">{item.icon || s.defaultIcon}</div>
                             <div className="flex flex-col overflow-hidden">

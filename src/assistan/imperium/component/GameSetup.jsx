@@ -1,7 +1,7 @@
 import {Component} from "react";
 import WithNavigate from "../../utils/withNavigate";
 import {Button, nations} from "../util/Util";
-import {MinusCircle, PlusCircle} from "lucide-react";
+import {MinusCircle, PlusCircle, Swords, ArrowLeft} from "lucide-react";
 import PlayerSetup from "./PlayerSetup";
 
 class GameSetup extends Component {
@@ -89,40 +89,78 @@ class GameSetup extends Component {
 
 
     render() {
+        const readyToStart = !this.state.players.some((p) => !p.selected);
+
         return(
-            <>
-                <div className="container mx-auto p-4" style={{backgroundColor: '#d9d9f2'}}>
-                    <h1 className="text-xl sm:text-2xl font-bold mb-4 text-indigo-800">플레이어 Setup</h1>
-                    <div className="flex items-center space-x-4 mb-4">
-                        <Button onClick={this.handler.player.addPlayer} disabled={this.state.players.length >= 4} className="bg-green-400 text-white">
-                            <PlusCircle size={24} />
-                        </Button>
-                        <Button onClick={this.handler.player.removePlayer} disabled={this.state.players.length <= 1} className="bg-red-400 text-white">
-                            <MinusCircle size={24} />
-                        </Button>
-                        <span>플레이어 수: {this.state.players.length}</span>
+            <div className="relative bg-slate-950">
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                    <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-cyan-500/10 blur-[120px]" />
+                    <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-indigo-600/10 blur-[120px]" />
+                </div>
+
+                <div className="relative container mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
+                    <button
+                        onClick={() => this.props.navigate('/')}
+                        className="mb-6 flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-cyan-300"
+                    >
+                        <ArrowLeft size={16}/> 홈으로
+                    </button>
+
+                    <div className="mb-8 flex items-center gap-3">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400/20 to-indigo-500/20 ring-1 ring-white/10">
+                            <Swords className="h-5 w-5 text-cyan-300"/>
+                        </div>
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-widest text-cyan-400/70">임페리움: 레전드</p>
+                            <h1 className="text-xl font-bold text-white sm:text-2xl">플레이어 설정</h1>
+                        </div>
                     </div>
-                    {this.state.players.map((player, index) => (
-                        <PlayerSetup
-                            key={index}
-                            index={index}
-                            player={player}
-                            onTypeChange={this.fnc.typeChange}
-                            onNationChange={this.fnc.nationChange}
-                            onRandomNation={this.fnc.randomNation}
-                            onNameChange={this.fnc.nameChange}
-                            availableNations={this.state.availableNations}
-                        />
-                    ))}
+
+                    <div className="mb-5 flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                        <span className="text-sm font-medium text-slate-300">
+                            플레이어 수 <span className="font-bold text-white">{this.state.players.length}</span> / 4
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <Button onClick={this.handler.player.removePlayer} disabled={this.state.players.length <= 1} className="bg-white/10 text-slate-200 hover:bg-white/15">
+                                <MinusCircle size={18} />
+                            </Button>
+                            <Button onClick={this.handler.player.addPlayer} disabled={this.state.players.length >= 4} className="bg-cyan-400/15 text-cyan-300 hover:bg-cyan-400/25">
+                                <PlusCircle size={18} />
+                            </Button>
+                        </div>
+                    </div>
+
+                    <div className="mb-6">
+                        {this.state.players.map((player, index) => (
+                            <PlayerSetup
+                                key={index}
+                                index={index}
+                                player={player}
+                                onTypeChange={this.fnc.typeChange}
+                                onNationChange={this.fnc.nationChange}
+                                onRandomNation={this.fnc.randomNation}
+                                onNameChange={this.fnc.nameChange}
+                                availableNations={this.state.availableNations}
+                            />
+                        ))}
+                    </div>
+
                     <Button
                         onClick={this.fnc.startGame}
-                        disabled={this.state.players.some((p) => !p.selected)}
-                        className="mt-4 w-full bg-indigo-500 text-white hover:bg-indigo-600"
+                        disabled={!readyToStart}
+                        className={`w-full py-3.5 text-base shadow-lg ${
+                            readyToStart
+                                ? 'bg-gradient-to-r from-cyan-400 to-indigo-400 text-slate-950 shadow-cyan-500/20 hover:brightness-110'
+                                : 'bg-white/10 text-slate-500'
+                        }`}
                     >
                         게임 시작
                     </Button>
+                    {!readyToStart && (
+                        <p className="mt-2 text-center text-xs text-slate-500">모든 플레이어의 국가를 선택해 주세요.</p>
+                    )}
                 </div>
-            </>
+            </div>
         )
     }
 

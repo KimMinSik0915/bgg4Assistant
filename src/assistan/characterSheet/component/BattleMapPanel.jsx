@@ -244,7 +244,7 @@ const BattleMapPanel = () => {
 
     return (
         <div
-            className="flex flex-col gap-3 p-3 rounded-xl border bg-[var(--card-bg)] select-none touch-none"
+            className="flex flex-col gap-3 p-3 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md select-none touch-none"
             style={{ borderColor: 'var(--border-color)' }}
             onMouseMove={handleMove}
             onMouseUp={handleEnd}

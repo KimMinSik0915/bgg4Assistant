@@ -5,7 +5,7 @@
 const CharacterHeaderCard = ({ charData, inspiration, onToggleInspiration }) => {
     return (
         <header
-            className="p-4 rounded-xl border flex flex-col gap-3"
+            className="p-4 rounded-xl border flex flex-col gap-3 shadow-lg"
             style={{
                 background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)'
               , borderColor : 'var(--accent-color)'

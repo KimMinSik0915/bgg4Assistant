@@ -13,6 +13,15 @@
     animation: cs-screen-damage 0.4s ease-in-out;
 }
 
+/* @3d-dice/dice-box가 만드는 캔버스는 자체 크기(width/height)를 CSS로 지정해주지 않으면
+   브라우저 기본 캔버스 크기(300x150)로 남아 있다가 결국 0x0으로 잡혀서 아무것도 안 보인다.
+   컨테이너(#cs-dice-box-canvas-root, position:fixed inset-0)를 꽉 채우도록 명시한다. */
+.dice-box-canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+}
+
 @keyframes cs-dice-shake {
     0%   { transform: rotate(0deg) scale(1); }
     25%  { transform: rotate(10deg) scale(1.1); }
@@ -23,7 +32,7 @@
 
 .cs-dice-rolling {
     animation: cs-dice-shake 0.15s infinite;
-    background-color: var(--highlight) !important;
+    filter: drop-shadow(0 0 8px var(--accent-color));
 }
 
 .cs-checkbox-used:has(input:checked) {

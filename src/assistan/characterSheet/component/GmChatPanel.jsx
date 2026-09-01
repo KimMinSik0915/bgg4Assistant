@@ -18,7 +18,7 @@ const GmChatPanel = ({
     };
 
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)]" style={{ borderColor : 'var(--border-color)' }}>
+        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md" style={{ borderColor : 'var(--border-color)' }}>
             <div
                 className="text-base font-bold pb-1.5 mb-3 flex justify-between items-center border-b-2"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}
@@ -166,7 +166,7 @@ const GmChatPanel = ({
                         <div
                             key={i}
                             className="flex items-center justify-between text-xs px-2 py-1 rounded-md"
-                            style={{ backgroundColor : 'rgba(139,92,246,0.15)', color : 'var(--text-main)' }}
+                            style={{ backgroundColor : 'rgba(34,211,238,0.15)', color : 'var(--text-main)' }}
                         >
                             <span>📎 {f.name}</span>
                             <button onClick={() => onRemoveAttachment(i)} className="font-bold px-1" style={{ color : 'var(--danger)' }}>✕</button>

@@ -5,6 +5,7 @@ import ImperiumManager from "./assistan/imperium/main/ImperiumManager";
 import Layout from "./assistan/layout/main/Layout";
 import LordOfRingsDuelManager from "./assistan/RoRDuel/main/LordOfRingsDuelManager";
 import CharacterSheetManager from "./assistan/characterSheet/main/CharacterSheetManager";
+import SettingsScreen from "./assistan/settings/main/SettingsScreen";
 
 function App() {
     return (
@@ -15,6 +16,7 @@ function App() {
                     <Route path={'/imperium'} element={<ImperiumManager/>} />
                     <Route path={'/bandu'} element={<LordOfRingsDuelManager/> } />
                     <Route path={'/character-sheet'} element={<CharacterSheetManager/> } />
+                    <Route path={'/settings'} element={<SettingsScreen/> } />
                 </Routes>
             </Layout>
         </BrowserRouter>

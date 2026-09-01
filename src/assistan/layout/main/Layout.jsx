@@ -7,7 +7,7 @@ import FooterLayout from "../component/FooterLayout";
 class Layout extends Component {
 
     state = {
-        backgroundColor : '#d9d9f2'
+        backgroundColor : '#020617'
     }
 
     constructor(props) {
@@ -45,7 +45,7 @@ class Layout extends Component {
         return (
             <div className="flex flex-col min-h-screen" style={{ backgroundColor }}>
                 <HeaderLayout />
-                <main className="flex-grow px-4 py-6 sm:px-6 sm:py-8">
+                <main className="flex-grow">
                     {this.props.children}
                 </main>
                 <FooterLayout/>

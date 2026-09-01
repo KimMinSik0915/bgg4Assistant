@@ -5,7 +5,7 @@
 const HpCard = ({ hp, onChangeHp, onTakeDamage, onShortRest, onLongRest }) => {
     return (
         <div
-            className="p-3.5 rounded-xl border"
+            className="p-3.5 rounded-xl border backdrop-blur-md"
             style={{
                 background : 'linear-gradient(135deg, rgba(239,68,68,0.15) 0%, var(--card-bg) 100%)'
               , borderColor : 'rgba(239,68,68,0.4)'

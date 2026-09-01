@@ -1,4 +1,5 @@
 import React, { Component } from 'react';
+import { ArrowLeft, Shuffle, Sparkles } from 'lucide-react';
 
 // 카드 뒷면 이미지 import
 import cardBackImage from '../resource/img/actionCard/back/action_card_back.png';
@@ -83,58 +84,81 @@ class GameStatus extends Component {
         const allCardsRevealed = revealedCards.length === this.state.actionCards.length;
 
         return (
-            <div className="container mx-auto px-4 py-8">
-                <div className="flex justify-center items-start space-x-8">
-                    {/* 선택한 캐릭터 카드 */}
-                    <div className="flex flex-col items-center">
-                        <img
-                            src={selectedCharacter.image}
-                            alt={selectedCharacter.name}
-                            className="w-50 h-80 object-cover rounded-lg mb-2"
-                        />
-                        <p className="text-center">{selectedCharacter.krName}</p>
-                    </div>
-
-                    {/* 카드 영역 - 세로 배치 */}
-                    <div className="flex flex-col space-y-4">
-                        {/* 카드 뒷면 이미지 */}
-                        <div className={`relative ${allCardsRevealed ? 'opacity-10' : ''}`}>
-                            <img
-                                src={cardBackImage}
-                                alt="Cards Back"
-                                className="w-64 h-40 object-cover rounded-lg"
-                            />
-                            {allCardsRevealed && (
-                                <div className="absolute inset-0 border-4 border-red-500 rounded-lg"></div>
-                            )}
-                        </div>
-
-                        {/* 현재 선택된 카드 이미지 */}
-                        <div>
-                            {currentCard ? (
-                                <img
-                                    src={currentCard.imgPath}
-                                    alt={`Card ${currentCard.id}`}
-                                    className="w-64 h-40 object-cover rounded-lg"
-                                />
-                            ) : (
-                                <div
-                                    className="w-64 h-40 bg-gray-200 flex items-center justify-center text-gray-500 rounded-lg">
-                                    <p className="text-center">카드를 선택해주세요</p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
+            <div className="relative bg-slate-950">
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                    <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-amber-500/10 blur-[120px]" />
+                    <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-emerald-600/10 blur-[120px]" />
                 </div>
 
-                {/* 다음 버튼 */}
-                <div className="mt-8 text-center">
+                <div className="relative container mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
                     <button
-                        onClick={this.handler.flipCard}
-                        className="px-6 py-2 bg-blue-500 text-white rounded-full hover:bg-blue-600"
+                        onClick={() => this.props.navigate('/bandu')}
+                        className="mb-6 flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-cyan-300"
                     >
-                        다음
+                        <ArrowLeft size={16}/> 캐릭터 선택으로
                     </button>
+
+                    <div className="flex flex-col items-center gap-8 sm:flex-row sm:items-start sm:justify-center">
+                        {/* 선택한 캐릭터 카드 */}
+                        <div className="flex shrink-0 flex-col items-center">
+                            <div className="relative h-56 w-40 overflow-hidden rounded-2xl border border-white/10 shadow-lg sm:h-72 sm:w-52">
+                                <img
+                                    src={selectedCharacter.image}
+                                    alt={selectedCharacter.krName}
+                                    className="h-full w-full object-cover"
+                                />
+                                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                                <p className="absolute inset-x-0 bottom-0 p-2 text-center text-sm font-bold text-white drop-shadow-md">{selectedCharacter.krName}</p>
+                            </div>
+                        </div>
+
+                        {/* 카드 영역 */}
+                        <div className="flex flex-col items-center gap-4">
+                            <div className="flex items-center gap-2 text-xs text-slate-400">
+                                <Sparkles size={14} className="text-amber-300"/>
+                                공개된 카드 {revealedCards.length} / {this.state.actionCards.length}
+                            </div>
+
+                            <div className={`relative transition-opacity ${allCardsRevealed ? 'opacity-10' : ''}`}>
+                                <img
+                                    src={cardBackImage}
+                                    alt="카드 뒷면"
+                                    className="h-40 w-64 rounded-xl object-cover shadow-lg"
+                                />
+                                {allCardsRevealed && (
+                                    <div className="absolute inset-0 rounded-xl border-4 border-rose-500"></div>
+                                )}
+                            </div>
+
+                            <div>
+                                {currentCard ? (
+                                    <img
+                                        src={currentCard.imgPath}
+                                        alt={`카드 ${currentCard.id}`}
+                                        className="h-40 w-64 rounded-xl object-cover shadow-lg shadow-amber-500/10 ring-1 ring-amber-400/30"
+                                    />
+                                ) : (
+                                    <div className="flex h-40 w-64 items-center justify-center rounded-xl border border-dashed border-white/15 bg-white/[0.02] text-slate-500">
+                                        <p className="text-center text-sm">카드를 선택해주세요</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {allCardsRevealed && (
+                                <p className="text-xs font-medium text-rose-300">모든 카드가 공개되었어요. 다음을 누르면 덱이 다시 섞여요.</p>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 다음 버튼 */}
+                    <div className="mt-10 text-center">
+                        <button
+                            onClick={this.handler.flipCard}
+                            className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-amber-400 to-emerald-400 px-8 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-amber-500/20 transition-all duration-200 hover:brightness-110 active:scale-95 sm:text-base"
+                        >
+                            <Shuffle size={16}/> 다음 카드
+                        </button>
+                    </div>
                 </div>
             </div>
         );
