@@ -318,12 +318,15 @@ const normalizeDescriptiveSchema = (raw) => {
         name : sp.name, desc : sp.effect || '', type : buildSpellTypeLabel(sp.level, sp.duration), dice : extractSpellDice(sp.effect)
     }));
 
-    const preparedFromLevelList = (spellcasting.level_1_spells || []).map(sp => ({
-        name : sp.name
-      , desc : [sp.range, sp.duration, sp.save ? `내성 ${sp.save}` : null].filter(Boolean).join(' / ')
-      , type : `1레벨${sp.casting_time ? ` / ${sp.casting_time}` : ''}`
-      , dice : extractSpellDice(sp.damage || sp.effect || '')
-    }));
+    const preparedFromLevelList = (spellcasting.level_1_spells || []).map(sp => {
+        const meta = [sp.range, sp.duration, sp.save ? `내성 ${sp.save}` : null].filter(Boolean).join(' / ');
+        return {
+            name : sp.name
+          , desc : sp.effect ? `${sp.effect}${meta ? ` (${meta})` : ''}` : meta
+          , type : `1레벨${sp.casting_time ? ` / ${sp.casting_time}` : ''}`
+          , dice : extractSpellDice(sp.damage || sp.effect || '')
+        };
+    });
 
     const preparedSpells = [...preparedFromAlwaysFree, ...preparedFromLevelList];
 
