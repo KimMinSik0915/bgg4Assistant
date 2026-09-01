@@ -12,6 +12,7 @@ import SpellsAndFeaturesCard from "../component/SpellsAndFeaturesCard";
 import SkillsCard from "../component/SkillsCard";
 import EquipmentCard from "../component/EquipmentCard";
 import TraitsAndInventoryCard from "../component/TraitsAndInventoryCard";
+import BattleMapPanel from "../component/BattleMapPanel"; // 🔥 전투 지도 메인 탭 컴포넌트
 import GmChatPanel from "../component/GmChatPanel";
 import DicePanel from "../component/DicePanel";
 import "../resource/CSS/characterSheet.css";
@@ -20,15 +21,11 @@ const GEMINI_KEY_STORAGE = 'cs_gemini_api_key';
 const GEMINI_MODEL_STORAGE = 'cs_gemini_model';
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
-/**
- * @Author : 김민식
- * CharacterSheetManager : D&D 5e 동적 캐릭터 시트
- */
 class CharacterSheetManager extends Component {
 
     state = {
-        activeTab: 'chat'        // 🔥 메인 탭 ('chat': GM 대화 / 'sheet': 캐릭터 시트)
-      , sheetSubTab: 'abilities' // 🔥 캐릭터 시트 서브 탭 ('abilities', 'spells', 'skills', 'equipment', 'traits', 'inventory')
+        activeTab: 'chat'        // 🔥 메인 탭 ('chat': GM 대화 / 'sheet': 캐릭터 시트 / 'map': 전투 지도)
+      , sheetSubTab: 'abilities' // 캐릭터 시트 서브 탭
       , isUploadActive : false
       , rawInput : ''
       , charData : null
@@ -572,7 +569,7 @@ class CharacterSheetManager extends Component {
                 className={`min-h-screen p-3 pb-36 bg-[var(--bg-color)] ${hitEffectKey > 0 ? 'cs-hit-effect' : ''}`}
                 style={themeVars}
             >
-                <div className="max-w-[600px] mx-auto flex flex-col gap-3">
+                <div className="max-w-[650px] mx-auto flex flex-col gap-3">
                     <div className="flex justify-end">
                         <button
                             type="button"
@@ -597,24 +594,24 @@ class CharacterSheetManager extends Component {
 
                     {charData && (
                         <>
-                            {/* 📌 메인 탭 */}
+                            {/* 📌 메인 탭바 (3개 메인 탭) */}
                             <div className="flex border-b border-[var(--border-color)] mb-1">
                                 <button
                                     type="button"
                                     onClick={() => this.handler.changeTab('chat')}
-                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1.5 ${
+                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1 ${
                                         activeTab === 'chat'
                                             ? 'border-[var(--accent-color)] text-[var(--accent-color)] bg-[var(--card-bg)] rounded-t-lg'
                                             : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]'
                                     }`}
                                 >
                                     <span>🎲</span>
-                                    <span>GM 과의 대화</span>
+                                    <span>GM과의 대화</span>
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => this.handler.changeTab('sheet')}
-                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1.5 ${
+                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1 ${
                                         activeTab === 'sheet'
                                             ? 'border-[var(--accent-color)] text-[var(--accent-color)] bg-[var(--card-bg)] rounded-t-lg'
                                             : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]'
@@ -622,6 +619,18 @@ class CharacterSheetManager extends Component {
                                 >
                                     <span>📜</span>
                                     <span>캐릭터 시트</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => this.handler.changeTab('map')}
+                                    className={`flex-1 py-2.5 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-1 ${
+                                        activeTab === 'map'
+                                            ? 'border-[var(--accent-color)] text-[var(--accent-color)] bg-[var(--card-bg)] rounded-t-lg'
+                                            : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                                    }`}
+                                >
+                                    <span>🗺️</span>
+                                    <span>전투 지도</span>
                                 </button>
                             </div>
 
@@ -673,7 +682,7 @@ class CharacterSheetManager extends Component {
                                         onLongRest={this.handler.longRest}
                                     />
 
-                                    {/* 🔘 서브 탭 바 (자동 줄바꿈 flex-wrap 적용) */}
+                                    {/* 🔘 서브 탭 바 */}
                                     <div className="flex flex-wrap gap-1.5 pb-2 my-1 border-b" style={{ borderColor : 'var(--border-color)' }}>
                                         {subTabList.map(tab => (
                                             <button
@@ -747,6 +756,11 @@ class CharacterSheetManager extends Component {
                                         />
                                     )}
                                 </>
+                            )}
+
+                            {/* 🗺️ 3. 전투 지도 (VTT) 메인 탭 */}
+                            {activeTab === 'map' && (
+                                <BattleMapPanel />
                             )}
                         </>
                     )}
