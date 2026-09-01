@@ -23,6 +23,12 @@ import {
   DICE_BOX_SELECTOR,
   DICE_RESULT_EVENT,
 } from "../service/dice3DEngine";
+import d4BadgeIcon from "../resource/diceIcons/d4.svg";
+import d6BadgeIcon from "../resource/diceIcons/d6.svg";
+import d8BadgeIcon from "../resource/diceIcons/d8.svg";
+import d10BadgeIcon from "../resource/diceIcons/d10.svg";
+import d12BadgeIcon from "../resource/diceIcons/d12.svg";
+import d20BadgeIcon from "../resource/diceIcons/d20.svg";
 
 const DICE_LIST = [4, 6, 8, 10, 12, 20];
 const EMPTY_QUEUE = { 4: 0, 6: 0, 8: 0, 10: 0, 12: 0, 20: 0 };
@@ -42,161 +48,55 @@ const FAB_GRADIENT = "linear-gradient(135deg, #6366f1 0%, #22d3ee 100%)";
 const DICE_ACCENT = "#22d3ee";
 const DICE_HIGHLIGHT = "#818cf8";
 
-// 주사위 면 수를 그대로 다각형 변 수로 사용 → d8/d10/d12/d20처럼 각지고 둥근 정도가 면 수와
-// 자연스럽게 맞아떨어지는 주사위는 이 방식을 그대로 쓴다.
-const polygonPoints = (sides, radius = 46, cx = 50, cy = 50) => {
-  const n = Math.max(3, Math.min(sides, 20));
-  const pts = [];
-  for (let i = 0; i < n; i++) {
-    const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
-    pts.push(
-      `${(cx + radius * Math.cos(angle)).toFixed(2)},${(cy + radius * Math.sin(angle)).toFixed(2)}`,
-    );
-  }
-  return pts.join(" ");
+// game-icons.net의 실제 다이스 도안(D4·D8·D10·D12·D20은 Delapouite·Skoll 작가, CC BY 3.0 —
+// 자세한 출처는 resource/diceIcons/CREDITS.md)을 마스크로 써서 브랜드 그라디언트를 입힌다.
+// 실제 면 분할선·눈금까지 있는 진짜 다면체 도안이라 손으로 그린 다각형보다 훨씬 입체적으로
+// 보인다. d6만은 원본 세트에 눈금 없는 정육면체가 없어서, 같은 "꽉 찬 실루엣 + 면 사이 가는
+// 틈" 질감으로 등각 큐브를 손수 그려 넣었다(d6.svg).
+const DICE_BADGE_ICONS = {
+  4: d4BadgeIcon,
+  6: d6BadgeIcon,
+  8: d8BadgeIcon,
+  10: d10BadgeIcon,
+  12: d12BadgeIcon,
+  20: d20BadgeIcon,
 };
 
-// d4(삼각뿔) / d6(정육면체)는 각지고 밝은 면·그늘진 면을 나눠 칠해서 "진짜 입체"처럼 보이게 그린다.
-// 각 면은 같은 그라디언트를 공통 바탕으로 쓰고, 그 위에 흰색/검은색을 살짝 얹어 빛이 왼쪽 위에서
-// 오는 것처럼 명암을 준다 — 배경색이 뭐든 항상 "밝다/어둡다"가 유지되도록 불투명 오버레이를 쓴다.
-const cubeFaces = (gradientId) => (
-  <>
-    {/* 왼쪽 아래 면 (중간 톤) */}
-    <polygon
-      points="14,32 50,54 50,98 14,76"
-      fill={`url(#${gradientId})`}
-      stroke="rgba(255,255,255,0.55)"
-      strokeWidth="2.5"
-      strokeLinejoin="round"
-    />
-    {/* 오른쪽 아래 면 (그늘) */}
-    <polygon
-      points="86,32 86,76 50,98 50,54"
-      fill={`url(#${gradientId})`}
-      stroke="rgba(255,255,255,0.55)"
-      strokeWidth="2.5"
-      strokeLinejoin="round"
-    />
-    <polygon
-      points="86,32 86,76 50,98 50,54"
-      fill="#000000"
-      fillOpacity="0.32"
-    />
-    {/* 윗면 (하이라이트) */}
-    <polygon
-      points="50,10 86,32 50,54 14,32"
-      fill={`url(#${gradientId})`}
-      stroke="rgba(255,255,255,0.55)"
-      strokeWidth="2.5"
-      strokeLinejoin="round"
-    />
-    <polygon
-      points="50,10 86,32 50,54 14,32"
-      fill="#ffffff"
-      fillOpacity="0.3"
-    />
-    <polygon
-      points="50,10 86,32 50,54 14,32"
-      fill={`url(#${gradientId}-gloss)`}
-    />
-  </>
-);
-
-const tetraFaces = (gradientId) => (
-  <>
-    {/* 아래 면 (중간 톤) */}
-    <polygon
-      points="10,88 90,88 50,60"
-      fill={`url(#${gradientId})`}
-      stroke="rgba(255,255,255,0.55)"
-      strokeWidth="2.5"
-      strokeLinejoin="round"
-    />
-    <polygon points="10,88 90,88 50,60" fill="#000000" fillOpacity="0.16" />
-    {/* 오른쪽 면 (그늘) */}
-    <polygon
-      points="50,8 90,88 50,60"
-      fill={`url(#${gradientId})`}
-      stroke="rgba(255,255,255,0.55)"
-      strokeWidth="2.5"
-      strokeLinejoin="round"
-    />
-    <polygon points="50,8 90,88 50,60" fill="#000000" fillOpacity="0.3" />
-    {/* 왼쪽 면 (하이라이트) */}
-    <polygon
-      points="50,8 50,60 10,88"
-      fill={`url(#${gradientId})`}
-      stroke="rgba(255,255,255,0.55)"
-      strokeWidth="2.5"
-      strokeLinejoin="round"
-    />
-    <polygon points="50,8 50,60 10,88" fill="#ffffff" fillOpacity="0.26" />
-  </>
-);
-
+// 아이콘 안에는 이미 예시 숫자가 박혀 있어서(예: d20 도안 한가운데엔 "20"), 실제 굴림 값을
+// 표시해야 하는 자리에는 그 위에 크고 굵은 숫자를 덧그려 가려버린다.
 // 평면형 다이스 아이콘 (선택 버튼 / FAB / 풀스크린 결과 모두 이 하나로 크기만 바꿔서 재사용).
-// d4·d6는 입체감 있는 전용 모양을, 그 외에는 면 수만큼의 각진 다각형을 그린다.
-const DiceShape = ({ sides, value, size = 40, glow = false, gradientId }) => {
-  const is3D = sides === 4 || sides === 6;
-  // d4/d6는 안쪽 면 배치상 숫자가 중앙에서 살짝 치우쳐야 보기 좋다.
-  const valueShift = sides === 4 ? -9 : sides === 6 ? 15 : 0;
+const DiceShape = ({ sides, value, size = 40, glow = false }) => {
+  const badgeIcon = DICE_BADGE_ICONS[sides];
 
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
-      <svg
-        viewBox="0 0 100 100"
-        className="absolute inset-0 w-full h-full"
+      <div
+        aria-hidden="true"
+        className="absolute inset-0"
         style={{
+          background: `linear-gradient(135deg, var(--accent-color, ${DICE_ACCENT}) 0%, var(--highlight, ${DICE_HIGHLIGHT}) 100%)`,
+          WebkitMaskImage: `url(${badgeIcon})`,
+          maskImage: `url(${badgeIcon})`,
+          WebkitMaskSize: "contain",
+          maskSize: "contain",
+          WebkitMaskRepeat: "no-repeat",
+          maskRepeat: "no-repeat",
+          WebkitMaskPosition: "center",
+          maskPosition: "center",
           filter: glow ? "drop-shadow(0 6px 16px rgba(0,0,0,0.5))" : "none",
         }}
-      >
-        <defs>
-          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop
-              offset="0%"
-              stopColor={`var(--accent-color, ${DICE_ACCENT})`}
-            />
-            <stop
-              offset="100%"
-              stopColor={`var(--highlight, ${DICE_HIGHLIGHT})`}
-            />
-          </linearGradient>
-          <radialGradient id={`${gradientId}-gloss`} cx="34%" cy="24%" r="70%">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.75" />
-            <stop offset="45%" stopColor="#ffffff" stopOpacity="0.12" />
-            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        {sides === 6 ? (
-          cubeFaces(gradientId)
-        ) : sides === 4 ? (
-          tetraFaces(gradientId)
-        ) : (
-          <>
-            <polygon
-              points={polygonPoints(sides)}
-              fill={`url(#${gradientId})`}
-              stroke="rgba(255,255,255,0.55)"
-              strokeWidth="2.5"
-              strokeLinejoin="round"
-            />
-            <polygon
-              points={polygonPoints(sides)}
-              fill={`url(#${gradientId}-gloss)`}
-            />
-          </>
-        )}
-      </svg>
-      <div
-        className="absolute inset-0 flex items-center justify-center font-black text-white"
-        style={{
-          fontSize: size * 0.34,
-          textShadow: "0 2px 5px rgba(0,0,0,0.55)",
-          transform: is3D ? `translateY(${valueShift}%)` : undefined,
-        }}
-      >
-        {value}
-      </div>
+      />
+      {value !== "" && (
+        <div
+          className="absolute inset-0 flex items-center justify-center font-black text-white"
+          style={{
+            fontSize: size * 0.34,
+            textShadow: "0 2px 5px rgba(0,0,0,0.75), 0 0 14px rgba(0,0,0,0.6)",
+          }}
+        >
+          {value}
+        </div>
+      )}
     </div>
   );
 };
