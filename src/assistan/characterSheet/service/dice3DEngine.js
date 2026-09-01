@@ -13,6 +13,20 @@
  */
 import DiceBox from "@3d-dice/dice-box";
 
+// 물리 주사위 캔버스가 실제로 붙는 자리. 화면 전체를 덮는 이 컨테이너는 이제 Layout에서 전역으로
+// 딱 한 번만 렌더링되므로(모든 화면에서 같은 캔버스를 공유), 셀렉터 문자열도 여기 한 곳에서만
+// 관리하고 DicePanel/CharacterSheetManager 양쪽에서 그대로 가져다 쓴다.
+export const DICE_BOX_SELECTOR = '#cs-dice-box-canvas-root';
+
+// 🎲 주사위 굴림 "결과가 나왔다"는 사실을 화면 어디에 있든(다른 화면이어도) 전역 플로팅 위젯에
+// 알려주는 아주 작은 이벤트 버스. CharacterSheetManager처럼 DicePanel과 같은 트리에 있지 않은
+// 코드도 굴림 결과를 방송(broadcast)하면, Layout에 한 번 떠 있는 DicePanel이 그걸 받아서 풀스크린
+// 결과 오버레이를 띄워준다 — props/ref로 남의 트리를 건너뛰어 연결할 필요가 없다.
+export const DICE_RESULT_EVENT = 'cs-dice-result';
+export const announceDiceResult = (payload) => {
+    window.dispatchEvent(new CustomEvent(DICE_RESULT_EVENT, { detail : payload }));
+};
+
 let boxPromise = null;
 
 // ⚠️ 반드시 async 함수여야 한다. new DiceBox(...)는 대상 컨테이너의 DOM 노드를 "동기적으로" 찾는데,

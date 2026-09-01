@@ -1,4 +1,4 @@
-import { Component, createRef } from "react";
+import { Component } from "react";
 import { BookOpenIcon, ChevronUpIcon, ChevronDownIcon, UploadCloudIcon, ArrowLeft } from "lucide-react";
 import withNavigate from "../../utils/withNavigate";
 import { normalizeCharacterData } from "../util/normalizeCharacterData";
@@ -16,7 +16,7 @@ import EquipmentCard from "../component/EquipmentCard";
 import TraitsAndInventoryCard from "../component/TraitsCard";
 import BattleMapPanel from "../component/BattleMapPanel"; // 🔥 전투 지도 메인 탭 컴포넌트
 import GmChatPanel from "../component/GmChatPanel";
-import DicePanel from "../component/DicePanel";
+import { rollPhysicalDie, DICE_BOX_SELECTOR, announceDiceResult } from "../service/dice3DEngine";
 import "../resource/CSS/characterSheet.css";
 import TraitsCard from "../component/TraitsCard";
 import InventoryCard from "../component/InventoryCard";
@@ -46,9 +46,6 @@ class CharacterSheetManager extends Component {
       , diceValue : 20
       , isRolling : false
       , resultText : '파일을 업로드하여 시작하세요!'
-      , diceQueue : { 4 : 0, 6 : 0, 8 : 0, 10 : 0, 12 : 0, 20 : 0 } // 🎲 여러 주사위를 담아뒀다 한 번에 굴리는 트레이
-      , queueResults : [] // 마지막 트레이 굴림의 개별 결과 [{sides, value}, ...]
-      , queueTotal : 0
       , hitEffectKey : 0
       , geminiApiKey : ''
       , geminiModel : DEFAULT_GEMINI_MODEL
@@ -68,7 +65,6 @@ class CharacterSheetManager extends Component {
     constructor(props) {
         super(props);
         this.gmHistory = [];
-        this.dicePanelRef = createRef();
     }
 
     rollTimer = null;
@@ -206,23 +202,6 @@ class CharacterSheetManager extends Component {
                   , resultText : '⛺ 긴 휴식 완료: HP, 주문 슬롯 및 특성이 모두 회복되었습니다!'
                 };
             });
-        }
-      , incrementQueueDie : (sides) => {
-            this.setState(prev => {
-                const current = prev.diceQueue[sides] || 0;
-                if (current >= 9) return null; // 한 종류당 최대 9개
-                return { diceQueue : { ...prev.diceQueue, [sides] : current + 1 } };
-            });
-        }
-      , decrementQueueDie : (sides) => {
-            this.setState(prev => {
-                const current = prev.diceQueue[sides] || 0;
-                if (current <= 0) return null;
-                return { diceQueue : { ...prev.diceQueue, [sides] : current - 1 } };
-            });
-        }
-      , resetQueue : () => {
-            this.setState({ diceQueue : { 4 : 0, 6 : 0, 8 : 0, 10 : 0, 12 : 0, 20 : 0 } });
         }
       , rollCheck : (label, sides, mod) => {
             this.setState({ selectedSides : sides, diceValue : sides });
@@ -364,10 +343,9 @@ class CharacterSheetManager extends Component {
         });
     }
 
-    // 실제 물리 엔진(@3d-dice/dice-box)으로 화면 전체에 주사위를 던져 굴리고, 착지한 진짜 눈(raw)을
-    // 받아서 판정 텍스트를 만든다. DicePanel(ref)이 아직 준비되지 않았거나 3D 엔진 로드에 실패하면
-    // 예전 방식(랜덤 폴백)으로 자연스럽게 대체한다 — 어느 쪽이든 사용자 경험(숫자가 나오고 결과
-    // 문구가 뜬다)은 동일하다.
+    // 실제 물리 엔진(@3d-dice/dice-box, 전역 캔버스)으로 화면 전체에 주사위를 던져 굴리고, 착지한
+    // 진짜 눈(raw)을 받아서 판정 텍스트를 만든다. 3D 엔진 로드에 실패하면 예전 방식(랜덤 폴백)으로
+    // 자연스럽게 대체한다 — 어느 쪽이든 사용자 경험(숫자가 나오고 결과 문구가 뜬다)은 동일하다.
     executeRoll = async (label, sides, mod) => {
         if (this.rollTimer) clearInterval(this.rollTimer);
         this.setState({ isRolling : true, resultText : '굴리는 중...' });
@@ -387,23 +365,18 @@ class CharacterSheetManager extends Component {
         }
 
         this.setState({ diceValue : total, isRolling : false, resultText });
+        // 🎲 이 물리 롤 결과를 전역 플로팅 위젯(Layout에 한 번 떠 있는 DicePanel)에 방송해서
+        // 화면 전체에 크게 보여준다 — 캐릭터 시트 트리 밖에 있는 컴포넌트라 props로는 못 넘긴다.
+        announceDiceResult({ mode : 'single', sides, value : total, text : resultText });
     }
 
-    // DicePanel이 들고 있는 3D 엔진으로 실제로 굴려서 눈을 받아온다. 실패 시 예전과 동일한
+    // 실제 물리 엔진(전역 캔버스, DICE_BOX_SELECTOR)으로 굴려서 눈을 받아온다. 실패 시 예전과 동일한
     // "짧게 반짝이다 멈추는" 애니메이션 + Math.random() 폴백으로 이어간다.
     rollDiePhysically = (sides) => new Promise((resolve) => {
-        const panel = this.dicePanelRef.current;
-        if (panel && typeof panel.rollPhysical === 'function') {
-            panel.rollPhysical(sides).then((value) => {
-                if (typeof value === 'number') {
-                    resolve(value);
-                } else {
-                    this.rollWithFallback(sides, resolve);
-                }
-            }).catch(() => this.rollWithFallback(sides, resolve));
-        } else {
-            this.rollWithFallback(sides, resolve);
-        }
+        rollPhysicalDie(DICE_BOX_SELECTOR, sides).then((value) => {
+            if (typeof value === 'number') resolve(value);
+            else this.rollWithFallback(sides, resolve);
+        }).catch(() => this.rollWithFallback(sides, resolve));
     });
 
     rollWithFallback = (sides, resolve) => {
@@ -414,62 +387,6 @@ class CharacterSheetManager extends Component {
             if (counter > 10) {
                 clearInterval(this.rollTimer);
                 resolve(Math.floor(Math.random() * sides) + 1);
-            }
-        }, 50);
-    }
-
-    // 🎲 트레이에 담긴 여러 종류/개수의 주사위를 한 번에 굴린다.
-    rollQueue = async () => {
-        const entries = Object.entries(this.state.diceQueue).filter(([, qty]) => qty > 0);
-        if (entries.length === 0 || this.state.isRolling) return;
-        if (this.rollTimer) clearInterval(this.rollTimer);
-        this.setState({ isRolling : true, resultText : '굴리는 중...', queueResults : [], queueTotal : 0 });
-
-        const specs = entries.map(([sides, qty]) => ({ sides : Number(sides), qty }));
-        const results = await this.rollDiceQueuePhysically(specs);
-        const total = results.reduce((sum, r) => sum + r.value, 0);
-        const breakdown = results.map(r => `d${r.sides}:${r.value}`).join('  +  ');
-        const resultText = `${results.length}개 굴림 = ${breakdown}  →  합계 ${total}`;
-
-        this.setState({
-            queueResults : results
-          , queueTotal : total
-          , diceValue : total
-          , selectedSides : results[0]?.sides || this.state.selectedSides
-          , isRolling : false
-          , resultText
-        });
-    }
-
-    // DicePanel의 3D 엔진으로 여러 개를 한 번에 굴린다. 실패 시 폴백 난수로 이어간다.
-    rollDiceQueuePhysically = (specs) => new Promise((resolve) => {
-        const panel = this.dicePanelRef.current;
-        if (panel && typeof panel.rollPhysicalMultiple === 'function') {
-            panel.rollPhysicalMultiple(specs).then((results) => {
-                if (Array.isArray(results) && results.length > 0) resolve(results);
-                else this.fallbackQueueRoll(specs, resolve);
-            }).catch(() => this.fallbackQueueRoll(specs, resolve));
-        } else {
-            this.fallbackQueueRoll(specs, resolve);
-        }
-    });
-
-    // 물리 엔진을 못 쓸 때, 예전과 같은 느낌으로 짧게 반짝이다가 Math.random() 결과로 정착한다.
-    fallbackQueueRoll = (specs, resolve) => {
-        let counter = 0;
-        const firstSides = specs[0]?.sides || 6;
-        this.rollTimer = setInterval(() => {
-            this.setState({ diceValue : Math.floor(Math.random() * firstSides) + 1 });
-            counter++;
-            if (counter > 10) {
-                clearInterval(this.rollTimer);
-                const results = [];
-                specs.forEach(({ sides, qty }) => {
-                    for (let i = 0; i < qty; i++) {
-                        results.push({ sides, value : Math.floor(Math.random() * sides) + 1 });
-                    }
-                });
-                resolve(results);
             }
         }, 50);
     }
@@ -501,7 +418,9 @@ class CharacterSheetManager extends Component {
                 const raw = Math.floor(Math.random() * sides) + 1;
                 const total = raw + modifier;
                 const modStr = modifier > 0 ? ` (+${modifier})` : (modifier < 0 ? ` (${modifier})` : '');
-                this.setState({ selectedSides : sides, diceValue : total, resultText : `${args.label || '굴림'}: ${total} [주사위 ${raw}${modStr}]` });
+                const resultText = `${args.label || '굴림'}: ${total} [주사위 ${raw}${modStr}]`;
+                this.setState({ selectedSides : sides, diceValue : total, resultText });
+                announceDiceResult({ mode : 'single', sides, value : total, text : resultText });
                 return `🎲 [주사위 굴림] ${args.label || '굴림'} → ${total} (주사위 ${raw}${modStr})`;
             }
             default :
@@ -662,7 +581,7 @@ class CharacterSheetManager extends Component {
     render() {
         const {
             activeTab, sheetSubTab, isUploadActive, rawInput, charData, themeKey, inspiration, usedFeatures, usedSpellSlots
-          , selectedSides, diceValue, isRolling, resultText, hitEffectKey, diceQueue, queueResults, queueTotal
+          , hitEffectKey
           , geminiApiKey, geminiModel, showGmSettings, gmMessages, gmInput, isGmLoading, gmAttachments
           , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
         } = this.state;
@@ -680,7 +599,7 @@ class CharacterSheetManager extends Component {
         return (
             <div
                 key={`hit-${hitEffectKey}`}
-                className={`p-3 pb-36 bg-[var(--bg-color)] ${hitEffectKey > 0 ? 'cs-hit-effect' : ''}`}
+                className={`p-3 bg-[var(--bg-color)] ${hitEffectKey > 0 ? 'cs-hit-effect' : ''}`}
                 style={themeVars}
             >
                 <div className="max-w-[650px] mx-auto flex flex-col gap-3">
@@ -915,21 +834,6 @@ class CharacterSheetManager extends Component {
                         </>
                     )}
                 </div>
-
-                <DicePanel
-                    ref={this.dicePanelRef}
-                    diceQueue={diceQueue}
-                    queueResults={queueResults}
-                    queueTotal={queueTotal}
-                    selectedSides={selectedSides}
-                    diceValue={diceValue}
-                    isRolling={isRolling}
-                    resultText={resultText}
-                    onIncrementDie={this.handler.incrementQueueDie}
-                    onDecrementDie={this.handler.decrementQueueDie}
-                    onResetQueue={this.handler.resetQueue}
-                    onRollQueue={this.rollQueue}
-                />
             </div>
         );
     }
