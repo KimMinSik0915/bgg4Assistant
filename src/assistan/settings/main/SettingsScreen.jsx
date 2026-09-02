@@ -54,7 +54,7 @@ class SettingsScreen extends Component {
                     </div>
 
                     {/* 앱 정보 */}
-                    <div className="mb-5 rounded-2xl border border-white/10 bg-slate-900/60 p-5 shadow-lg backdrop-blur-sm">
+                    <div className="mb-5 rounded-2xl border border-white/10 bg-slate-900/60 p-5 shadow-lg">
                         <div className="flex items-center gap-3">
                             <img src={bgg4AssistantIcoPath} alt="logo" className="h-12 w-12 rounded-2xl ring-1 ring-white/10"/>
                             <div>
@@ -73,7 +73,7 @@ class SettingsScreen extends Component {
                     </div>
 
                     {/* 빠른 이동 */}
-                    <div className="mb-5 rounded-2xl border border-white/10 bg-slate-900/60 p-5 shadow-lg backdrop-blur-sm">
+                    <div className="mb-5 rounded-2xl border border-white/10 bg-slate-900/60 p-5 shadow-lg">
                         <h2 className="mb-3 text-sm font-bold text-white">빠른 이동</h2>
                         <div className="flex flex-col gap-1.5">
                             {quickLinks.map((item) => (
@@ -90,7 +90,7 @@ class SettingsScreen extends Component {
                     </div>
 
                     {/* AI GM 안내 */}
-                    <div className="mb-5 rounded-2xl border border-white/10 bg-slate-900/60 p-5 shadow-lg backdrop-blur-sm">
+                    <div className="mb-5 rounded-2xl border border-white/10 bg-slate-900/60 p-5 shadow-lg">
                         <div className="mb-2 flex items-center gap-2">
                             <Sparkles size={16} className="text-cyan-300"/>
                             <h2 className="text-sm font-bold text-white">AI 게임 마스터 (Gemini) 안내</h2>

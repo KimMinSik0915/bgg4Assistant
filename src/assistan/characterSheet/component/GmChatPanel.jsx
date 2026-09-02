@@ -18,7 +18,7 @@ const GmChatPanel = ({
     };
 
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md h-full flex flex-col min-h-0 overflow-hidden" style={{ borderColor : 'var(--border-color)' }}>
+        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] h-full flex flex-col min-h-0 overflow-hidden" style={{ borderColor : 'var(--border-color)' }}>
             <div
                 className="text-base font-bold pb-1.5 mb-3 flex justify-between items-center border-b-2 shrink-0"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}

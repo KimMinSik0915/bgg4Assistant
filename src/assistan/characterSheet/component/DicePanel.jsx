@@ -217,8 +217,8 @@ const DiceResultOverlay = ({ overlay }) => {
           <div
             className="max-w-[90vw] rounded-full px-6 py-2.5 text-center text-base sm:text-xl font-extrabold text-white"
             style={{
-              background: "rgba(12,12,18,0.55)",
-              backdropFilter: "blur(8px)",
+              // iOS(WebKit)에서 backdrop-filter가 유독 무거워서 뺐다 - 대신 배경을 좀 더 진하게 해서 가독성 보완
+              background: "rgba(10,10,16,0.78)",
               border: "1px solid rgba(255,255,255,0.25)",
             }}
           >
@@ -240,11 +240,11 @@ const DiceResultOverlay = ({ overlay }) => {
 // 🎲 화면 전체를 덮는 실제 3D 물리 주사위 캔버스 + 사이트 전역 상단 플로팅 버튼/트레이.
 // Layout에 한 번만 마운트되어 props 없이 완전히 독립적으로 동작한다.
 const DicePanel = () => {
-  // 에셋(모델/워커) 준비를 미리 시작해서, 실제로 "굴리기"를 눌렀을 때 첫 로딩 지연이 없도록 한다.
-  useEffect(() => {
-    getDiceBox(DICE_BOX_SELECTOR).catch(() => {});
-  }, []);
-
+  // ⚠️ 예전엔 이 컴포넌트가 마운트되자마자(=사이트 어느 화면을 열든 무조건) WebGL 3D 엔진 +
+  // WASM 물리엔진(Ammo.js) + 에셋을 미리 로드했다. 그런데 이 컴포넌트는 Layout에 전역으로 항상
+  // 떠 있어서, 주사위를 한 번도 안 쓰는 화면(홈 화면 등)에서도 매번 무거운 WebGL 컨텍스트가
+  // 켜지는 셈이었다 — 특히 iOS(WebKit)에서 로딩 지연/발열/렌더링 이슈의 큰 원인이 된다.
+  // 이제는 사용자가 실제로 주사위 트레이를 펼칠 때(handleFabClick)만 미리 준비를 시작한다.
   const [expanded, setExpanded] = useState(false);
   const [diceQueue, setDiceQueue] = useState(EMPTY_QUEUE);
   const [isRolling, setIsRolling] = useState(false);
@@ -334,10 +334,15 @@ const DicePanel = () => {
     [fabPosition, handleFabDragMove, handleFabDragEnd],
   );
 
-  // 드래그 직후에 뒤따라오는 클릭은 무시해서, FAB을 옮기고 손을 뗐을 때 트레이가 실수로 열리지 않게 한다
+  // 드래그 직후에 뒤따라오는 클릭은 무시해서, FAB을 옮기고 손을 뗐을 때 트레이가 실수로 열리지 않게 한다.
+  // 트레이를 "여는" 순간에만 3D 엔진 준비를 시작한다 - 주사위를 안 쓰는 화면/방문에서는 절대 로드되지 않는다.
   const handleFabClick = () => {
     if (fabDragRef.current.moved) return;
-    setExpanded((v) => !v);
+    setExpanded((v) => {
+      const next = !v;
+      if (next) getDiceBox(DICE_BOX_SELECTOR).catch(() => {});
+      return next;
+    });
   };
 
   // 언마운트 시(드래그 도중 화면 전환 등) 전역 리스너가 남지 않도록 정리 - 언마운트 후 setState는 하지 않는다
@@ -461,8 +466,7 @@ const DicePanel = () => {
   const trayAlignRight = fabPosition.left + FAB_SIZE / 2 > window.innerWidth / 2;
   const trayStyle = {
     borderColor: DICE_ACCENT,
-    background: "rgba(15,17,26,0.92)",
-    backdropFilter: "blur(14px)",
+    background: "rgba(15,17,26,0.92)", // 이미 거의 불투명이라 backdrop-filter는 안 써도 티가 안 나서 뺐다(iOS 부담만 줄어듦)
     boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
     ...(trayOpenUp
       ? { bottom: Math.max(8, window.innerHeight - fabPosition.top + 10) }
@@ -633,7 +637,6 @@ const DicePanel = () => {
             className="absolute -bottom-8 right-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[0.65rem] font-bold text-white"
             style={{
               background: "rgba(12,12,18,0.75)",
-              backdropFilter: "blur(6px)",
             }}
           >
             굴리는 중...

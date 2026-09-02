@@ -23,7 +23,7 @@ const PlayerGameState = ({ player, index, onUpdateResources, onSettingsAction })
     };
 
     return (
-        <div className={`mb-4 rounded-2xl border p-4 shadow-lg backdrop-blur-sm transition-colors ${
+        <div className={`mb-4 rounded-2xl border p-4 shadow-lg transition-colors ${
             player.hasWonCondition
                 ? 'border-amber-400/40 bg-amber-400/[0.06]'
                 : 'border-white/10 bg-slate-900/60'

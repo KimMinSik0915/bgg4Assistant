@@ -7,7 +7,7 @@ import { themes } from "../resource/dataSet/themes";
 
 const SheetLoader = ({ rawInput, onChangeRawInput, onRender, onFileUpload, themeKey, onChangeTheme, onExport, canExport }) => {
     return (
-        <div className="border border-dashed p-3.5 rounded-2xl flex flex-col gap-2.5 bg-[var(--card-bg)] backdrop-blur-md" style={{ borderColor : 'var(--accent-color)' }}>
+        <div className="border border-dashed p-3.5 rounded-2xl flex flex-col gap-2.5 bg-[var(--card-bg)]" style={{ borderColor : 'var(--accent-color)' }}>
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm font-bold text-[var(--accent-color)]">📄 캐릭터 데이터 로드 (JSON / TXT)</div>
                 <div className="flex gap-1.5">

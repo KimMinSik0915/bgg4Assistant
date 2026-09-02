@@ -13,7 +13,7 @@ const STAT_KEYS = [
 
 const AbilitiesCard = ({ stats, proficiencyBonus, spellDC, spellAttackBonus, onRollCheck }) => {
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md" style={{ borderColor : 'var(--border-color)' }}>
+        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)]" style={{ borderColor : 'var(--border-color)' }}>
             <div
                 className="text-base font-bold pb-1.5 mb-3 flex justify-between border-b-2"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}

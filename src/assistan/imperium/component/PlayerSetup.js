@@ -3,7 +3,7 @@ import { Shuffle, Bot, User } from 'lucide-react';
 import {Button} from "../util/Util";
 
 const PlayerSetup = ({ index, player, onTypeChange, onNationChange, onRandomNation, onNameChange, availableNations }) => (
-    <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4 shadow-lg backdrop-blur-sm sm:flex-row sm:items-center">
+    <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4 shadow-lg sm:flex-row sm:items-center">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-bold text-cyan-300">
             {index + 1}
         </div>

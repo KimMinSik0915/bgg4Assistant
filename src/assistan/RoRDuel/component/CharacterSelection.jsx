@@ -73,7 +73,7 @@ class CharacterSelection extends Component {
                                 <button
                                     key={character.krName || character.enName}
                                     onClick={() => this.props.handler.characterSelect(character)}
-                                    className={`group relative aspect-square overflow-hidden rounded-2xl border bg-slate-900/60 shadow-lg backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${
+                                    className={`group relative aspect-square overflow-hidden rounded-2xl border bg-slate-900/60 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${
                                         isSelected
                                             ? 'border-amber-400/70 ring-2 ring-amber-400/50'
                                             : 'border-white/10 hover:border-white/25'

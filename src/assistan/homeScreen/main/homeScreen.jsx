@@ -127,7 +127,7 @@ class HomeScreen extends Component {
                 onClick={(e) => {
                   this.handler.onClick.actionIcon(e);
                 }}
-                className="group relative aspect-[3/4] overflow-hidden rounded-2xl border border-white/10 bg-slate-900/60 shadow-lg backdrop-blur-sm transition-all duration-300 ease-out hover:-translate-y-1.5 hover:border-cyan-400/40 hover:shadow-2xl hover:shadow-cyan-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                className="group relative aspect-[3/4] overflow-hidden rounded-2xl border border-white/10 bg-slate-900/60 shadow-lg transition-all duration-300 ease-out hover:-translate-y-1.5 hover:border-cyan-400/40 hover:shadow-2xl hover:shadow-cyan-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
               >
                 {!item.isCustomIcon && (
                   <div className="absolute inset-0 bg-gradient-to-br from-slate-800 to-slate-950" />
@@ -136,7 +136,7 @@ class HomeScreen extends Component {
                 <IconRenderer item={item} />
 
                 {item.tag && (
-                  <span className="absolute left-2 top-2 z-10 rounded-full bg-black/50 px-2 py-0.5 text-[9px] font-medium text-cyan-200 ring-1 ring-white/10 backdrop-blur sm:text-[10px]">
+                  <span className="absolute left-2 top-2 z-10 rounded-full bg-black/50 px-2 py-0.5 text-[9px] font-medium text-cyan-200 ring-1 ring-white/10 sm:text-[10px]">
                     {item.tag}
                   </span>
                 )}

@@ -528,7 +528,7 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
 
     return (
         <div
-            className="flex flex-col gap-3 p-3 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md select-none touch-none h-full min-h-0 overflow-hidden"
+            className="flex flex-col gap-3 p-3 rounded-xl border bg-[var(--card-bg)] select-none touch-none h-full min-h-0 overflow-hidden"
             style={{ borderColor: 'var(--border-color)' }}
             onMouseMove={handleMove}
             onMouseUp={handleEnd}
@@ -806,7 +806,7 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                         onMouseDown={(e) => e.stopPropagation()}
                         onTouchStart={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
-                        className="absolute bottom-2 left-2 right-2 z-50 bg-slate-900/95 text-white rounded-xl p-2.5 border-2 border-amber-500/80 shadow-2xl backdrop-blur-md max-w-md mx-auto flex flex-col gap-2"
+                        className="absolute bottom-2 left-2 right-2 z-50 bg-slate-900/95 text-white rounded-xl p-2.5 border-2 border-amber-500/80 shadow-2xl max-w-md mx-auto flex flex-col gap-2"
                     >
                         <div className="flex items-center justify-between border-b border-slate-700/80 pb-1.5">
                             <div className="flex items-center gap-2">

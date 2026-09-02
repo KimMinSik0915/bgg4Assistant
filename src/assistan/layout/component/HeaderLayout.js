@@ -77,7 +77,7 @@ class HeaderLayout extends Component {
         const { isMenuOpen, isLoginOpen } = this.state;
 
         return(
-            <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/80 shadow-lg shadow-black/20 backdrop-blur-xl">
+            <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/80 shadow-lg shadow-black/20">
                 <div className="container mx-auto flex h-16 items-center justify-between px-4 sm:h-[70px] sm:px-6">
                     <Link to="/" className="flex shrink-0 items-center gap-2.5" onClick={this.handler.closeAll}>
                         <img src={bgg4AssistantIcoPath} alt="logo" className="h-9 w-9 rounded-xl ring-1 ring-white/10 sm:h-10 sm:w-10"/>
@@ -109,7 +109,7 @@ class HeaderLayout extends Component {
                                 로그인
                             </button>
                             {isLoginOpen && (
-                                <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-white/10 bg-slate-900/95 p-3 text-xs leading-relaxed text-slate-300 shadow-xl backdrop-blur-xl">
+                                <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-white/10 bg-slate-900/95 p-3 text-xs leading-relaxed text-slate-300 shadow-xl">
                                     🚧 로그인 기능은 준비 중이에요. 조금만 기다려 주세요!
                                 </div>
                             )}
@@ -125,7 +125,7 @@ class HeaderLayout extends Component {
                     </div>
                 </div>
 
-                <nav className={`overflow-hidden border-t border-white/10 bg-slate-950/95 backdrop-blur-xl transition-[max-height] duration-300 ease-in-out md:hidden ${isMenuOpen ? 'max-h-96' : 'max-h-0 border-t-0'}`}>
+                <nav className={`overflow-hidden border-t border-white/10 bg-slate-950/95 transition-[max-height] duration-300 ease-in-out md:hidden ${isMenuOpen ? 'max-h-96' : 'max-h-0 border-t-0'}`}>
                     <ul className="flex flex-col gap-1 px-4 py-3">
                         {NavigationItems.map((item) => (
                             <li key={item.path ?? item.text}>{this.renderNavLink(item, 'mobile')}</li>

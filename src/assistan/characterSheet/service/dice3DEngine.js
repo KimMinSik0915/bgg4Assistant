@@ -10,8 +10,15 @@
  * 에러가 나고, 반대로 잘못된 키(container 대신 selector)로 넘기면 조용히 무시되고 캔버스가
  * document.body에 0x0 크기로 붙어버려서(아무 에러도 없이!) 화면에 아무것도 안 보이게 된다.
  * 둘 다 실제로 겪은 삽질이라 주석으로 남긴다.
+ *
+ * ⚠️ @3d-dice/dice-box는 Babylon.js + Ammo.js(WASM 물리엔진)를 통째로 끌고 오는 아주 무거운
+ * 패키지다(번들 gzip 기준 400KB+). 예전엔 파일 맨 위에서 `import DiceBox from "@3d-dice/dice-box"`로
+ * 정적 임포트했는데, 이러면 이 모듈을 참조하는 DicePanel이 Layout에 전역으로 항상 떠 있는 이상
+ * "주사위를 한 번도 안 쓰는" 페이지(홈 화면 등)에서도 이 무거운 라이브러리가 초기 번들에 통째로
+ * 같이 실려서 다운로드·파싱된다 — 실제로 쓰는 시점(getDiceBox 호출)을 늦춰도 번들 자체가 이미
+ * 같이 와버리면 아무 의미가 없다. 그래서 createBox 안에서 동적 import()로 바꿔, 웹팩이 이 라이브러리를
+ * 완전히 별도 청크로 쪼개고 실제로 처음 굴릴 때만 네트워크로 받아오게 한다.
  */
-import DiceBox from "@3d-dice/dice-box";
 
 // 물리 주사위 캔버스가 실제로 붙는 자리. 화면 전체를 덮는 이 컨테이너는 이제 Layout에서 전역으로
 // 딱 한 번만 렌더링되므로(모든 화면에서 같은 캔버스를 공유), 셀렉터 문자열도 여기 한 곳에서만
@@ -39,6 +46,7 @@ const createBox = async (selector, attempt = 0) => {
         await new Promise((r) => setTimeout(r, 60));
         return createBox(selector, attempt + 1);
     }
+    const { default : DiceBox } = await import("@3d-dice/dice-box");
     const box = new DiceBox({
         container : selector
       , assetPath : "/assets/dice-box/"
@@ -50,7 +58,10 @@ const createBox = async (selector, attempt = 0) => {
       , spinForce : 5
       , settleTimeout : 4000
       , offscreen : false
-      , enableShadows : true
+      // ⚠️ 그림자 렌더링(shadow map)은 WebGL 씬에서 GPU 비용이 가장 큰 축에 속한다. 특히 iOS
+      // Safari/WebKit은 이런 셰이더 패스에 데스크탑·안드로이드보다 훨씬 취약해서(발열·프레임드랍),
+      // 시각적으로 크게 아쉽지 않은 선에서 꺼둔다.
+      , enableShadows : false
       , lightIntensity : 1
     });
     await box.init();

@@ -1277,7 +1277,7 @@ class CharacterSheetManager extends Component {
         // 📤 업로드(다른 캐릭터 불러오기) 모달 - 데스크탑/모바일 워크스페이스 공용
         const uploadModal = isUploadActive && (
             <div
-                className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto p-4 bg-black/60 backdrop-blur-sm"
+                className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto p-4 bg-black/60"
                 onClick={this.handler.toggleUploadActive}
             >
                 <div className="relative w-full max-w-xl mt-10" onClick={(e) => e.stopPropagation()}>
@@ -1402,7 +1402,7 @@ class CharacterSheetManager extends Component {
                             )}
 
                             {activeTab === 'sheet' && (
-                                <div className="cs-scroll h-full min-h-0 overflow-y-auto rounded-xl border bg-[var(--card-bg)] backdrop-blur-md p-2.5 flex flex-col gap-3" style={{ borderColor : 'var(--border-color)' }}>
+                                <div className="cs-scroll h-full min-h-0 overflow-y-auto rounded-xl border bg-[var(--card-bg)] p-2.5 flex flex-col gap-3" style={{ borderColor : 'var(--border-color)' }}>
                                     {sheetBody}
                                 </div>
                             )}
@@ -1434,7 +1434,7 @@ class CharacterSheetManager extends Component {
                                     style={sheetCollapsed ? undefined : { height : mobileSheetHeight, minHeight : MIN_MOBILE_SHEET_HEIGHT }}
                                 >
                                     <div
-                                        className="h-full min-h-0 flex flex-col rounded-xl border bg-[var(--card-bg)] backdrop-blur-md overflow-hidden"
+                                        className="h-full min-h-0 flex flex-col rounded-xl border bg-[var(--card-bg)] overflow-hidden"
                                         style={{ borderColor : 'var(--border-color)' }}
                                     >
                                         <button
@@ -1536,7 +1536,7 @@ class CharacterSheetManager extends Component {
                                 style={sheetCollapsed ? undefined : { width : sheetWidth, minWidth : MIN_SHEET_WIDTH }}
                             >
                                 <div
-                                    className="h-full min-h-0 flex flex-col rounded-xl border bg-[var(--card-bg)] backdrop-blur-md overflow-hidden"
+                                    className="h-full min-h-0 flex flex-col rounded-xl border bg-[var(--card-bg)] overflow-hidden"
                                     style={{ borderColor : 'var(--border-color)' }}
                                 >
                                     <button
