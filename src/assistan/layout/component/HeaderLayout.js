@@ -1,5 +1,5 @@
 import {Component} from "react";
-import {Menu, User, X} from "lucide-react";
+import {Menu, Settings, User, X} from "lucide-react";
 import {Link, NavLink} from "react-router-dom";
 import {NavigationItems} from "../resources/DataSet/NavigationItems";
 import withNavigate from "../../utils/withNavigate";
@@ -91,6 +91,15 @@ class HeaderLayout extends Component {
                     </nav>
 
                     <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => this.handler.naviClick('/settings')}
+                            className="rounded-full p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                            title="설정"
+                            aria-label="설정"
+                        >
+                            <Settings size={18}/>
+                        </button>
+
                         <div className="relative hidden sm:block">
                             <button
                                 onClick={this.handler.toggleLogin}
