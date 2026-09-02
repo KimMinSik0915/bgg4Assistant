@@ -21,7 +21,7 @@ const endpoint = (model, apiKey) => `${GEMINI_API_BASE}/${model}:generateContent
  * @param {number} retries   최대 재시도 횟수 (기본값: 3회)
  */
 export const callGemini = async (
-    { apiKey, model, systemInstruction, contents, tools },
+    { apiKey, model, systemInstruction, contents },
     onRetryNotice = null,
     retries = 3
 ) => {
@@ -31,7 +31,6 @@ export const callGemini = async (
       , body : JSON.stringify({
             systemInstruction : systemInstruction ? { parts : [{ text : systemInstruction }] } : undefined
           , contents
-          , tools
         })
     });
 
@@ -59,7 +58,7 @@ export const callGemini = async (
 
             // 대기 완료 후 재귀적으로 재호출 (retries 횟수 차감)
             return callGemini(
-                { apiKey, model, systemInstruction, contents, tools },
+                { apiKey, model, systemInstruction, contents },
                 onRetryNotice,
                 retries - 1
             );

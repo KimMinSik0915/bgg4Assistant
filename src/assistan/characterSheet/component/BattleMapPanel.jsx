@@ -1,30 +1,133 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 /**
  * @Author : 김민식
- * BattleMapPanel : 모바일 대응 + 토큰 화면 중앙 생성 + 지도 10% 축소 + 지도 잠금
+ * BattleMapPanel : 스케일/줌 + 지도 위치 맞춤(Offset) + 격자 크기/색상 + 최신 좌표 동기화(tokensRef)
+ * + 토큰 HP 직접 입력(Direct Set) 기능 포함
  */
-const BattleMapPanel = () => {
-    const [maps, setMaps] = useState([]);                  // 업로드된 지도 배열
-    const [activeMapId, setActiveMapId] = useState(null);     // 현재 활성화된 지도 ID
-    const [tokens, setTokens] = useState([]);              // 배치된 토큰 배열
-    const [selectedTokenId, setSelectedTokenId] = useState(null); // 선택된 토큰 ID
-    const [draggingTokenId, setDraggingTokenId] = useState(null); // 드래그 중인 토큰 ID
-    const [showGrid, setShowGrid] = useState(true);        // 격자 가시성
-    const [mapScale, setMapScale] = useState(100);         // 🔍 지도 배율 (% : 10 ~ 200)
 
-    // 🔒 지도 잠금 상태
-    const [isMapLocked, setIsMapLocked] = useState(false); // true일 때 지도 드래그 금지
+// 🎨 격자 고대비 색상 프리셋
+const GRID_COLORS = {
+    amber: { name: '🟡 황금', line: 'rgba(251, 191, 36, 0.85)', shadow: 'rgba(0, 0, 0, 0.7)' },
+    white: { name: '⚪ 흰색', line: 'rgba(255, 255, 255, 0.9)', shadow: 'rgba(0, 0, 0, 0.7)' },
+    red:   { name: '🔴 빨강', line: 'rgba(239, 68, 68, 0.9)',   shadow: 'rgba(0, 0, 0, 0.7)' },
+    black: { name: '⚫ 검정', line: 'rgba(0, 0, 0, 0.85)',     shadow: 'rgba(255, 255, 255, 0.5)' }
+};
 
-    // 🖐️ 지도 드래그 이동(Pan) 상태
+// 💡 이미지 압축 헬퍼 함수
+const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+
+                if (width > maxWidth) {
+                    height = Math.round((height * maxWidth) / width);
+                    width = maxWidth;
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL('image/jpeg', quality));
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+};
+
+const BattleMapPanel = ({ mapState, onUpdateMapState }) => {
+    const [maps, setMaps] = useState([]);
+    const [activeMapId, setActiveMapId] = useState(null);
+    const [tokens, setTokens] = useState([]);
+    const [selectedTokenId, setSelectedTokenId] = useState(null);
+    const [draggingTokenId, setDraggingTokenId] = useState(null);
+
+    // 📐 격자 설정 상태
+    const [showGrid, setShowGrid] = useState(true);
+    const [gridSize, setGridSize] = useState(56);
+    const [gridColorKey, setGridColorKey] = useState('amber');
+
+    // 🔍 전체 지도 확대/축소 및 화면 드래그 이동 상태
+    const [mapScale, setMapScale] = useState(100);
+    const [isMapLocked, setIsMapLocked] = useState(false);
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
 
+    // 🎯 지도 오프셋 미세 조정 상태
+    const [isAlignMode, setIsAlignMode] = useState(false);
+    const [mapOffset, setMapOffset] = useState({ x: 0, y: 0 });
+
     const dragRef = useRef({ startX: 0, startY: 0, tokenX: 0, tokenY: 0, isDragging: false });
     const panStartRef = useRef({ x: 0, y: 0 });
+    const alignStartRef = useRef({ x: 0, y: 0 });
     const boardRef = useRef(null);
 
-    // 헬퍼: 터치/마우스 좌표 통합 추출
+    // ⚡ 클로저 문제 방지용 tokensRef (항상 최신 tokens 상태 유지)
+    const tokensRef = useRef(tokens);
+    useEffect(() => {
+        tokensRef.current = tokens;
+    }, [tokens]);
+
+    // 🎯 동적 격자 크기 기준 AI 좌표 계산 (A1, B2 등)
+    const calculateGridPos = (x, y, currentGridSize = gridSize) => {
+        const cellSize = Math.max(10, currentGridSize);
+        const colIndex = Math.floor(Math.max(0, x) / cellSize);
+        const rowIndex = Math.floor(Math.max(0, y) / cellSize) + 1;
+
+        let colName = '';
+        let tempCol = colIndex;
+        while (tempCol >= 0) {
+            colName = String.fromCharCode(65 + (tempCol % 26)) + colName;
+            tempCol = Math.floor(tempCol / 26) - 1;
+        }
+        return `${colName}${rowIndex}`;
+    };
+
+    // 💾 상위(sessionState) 전달 헬퍼
+    const notifyParentState = (updated = {}) => {
+        if (typeof onUpdateMapState === 'function') {
+            onUpdateMapState({
+                maps: updated.maps ?? maps,
+                activeMapId: updated.activeMapId ?? activeMapId,
+                tokens: updated.tokens ?? tokensRef.current,
+                showGrid: updated.showGrid ?? showGrid,
+                gridSize: updated.gridSize ?? gridSize,
+                gridColorKey: updated.gridColorKey ?? gridColorKey,
+                mapScale: updated.mapScale ?? mapScale,
+                isMapLocked: updated.isMapLocked ?? isMapLocked,
+                panOffset: updated.panOffset ?? panOffset,
+                mapOffset: updated.mapOffset ?? mapOffset
+            });
+        }
+    };
+
+    // 초기 상태 복원
+    useEffect(() => {
+        if (mapState) {
+            if (mapState.maps) setMaps(mapState.maps);
+            if (mapState.activeMapId !== undefined) setActiveMapId(mapState.activeMapId);
+            if (mapState.tokens) {
+                setTokens(mapState.tokens);
+                tokensRef.current = mapState.tokens;
+            }
+            if (mapState.showGrid !== undefined) setShowGrid(mapState.showGrid);
+            if (mapState.gridSize !== undefined) setGridSize(mapState.gridSize);
+            if (mapState.gridColorKey) setGridColorKey(mapState.gridColorKey);
+            if (mapState.mapScale !== undefined) setMapScale(mapState.mapScale);
+            if (mapState.isMapLocked !== undefined) setIsMapLocked(mapState.isMapLocked);
+            if (mapState.panOffset) setPanOffset(mapState.panOffset);
+            if (mapState.mapOffset) setMapOffset(mapState.mapOffset);
+        }
+    }, []);
+
     const getPos = (e) => {
         if (e.touches && e.touches.length > 0) {
             return { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -32,94 +135,131 @@ const BattleMapPanel = () => {
         return { x: e.clientX, y: e.clientY };
     };
 
+    // 📐 격자 크기 조절
+    const handleGridSizeChange = (delta) => {
+        const newSize = Math.max(20, Math.min(200, gridSize + delta));
+        setGridSize(newSize);
+
+        const updatedTokens = tokens.map(t => ({
+            ...t,
+            gridPos: calculateGridPos(t.x, t.y, newSize)
+        }));
+        setTokens(updatedTokens);
+        tokensRef.current = updatedTokens;
+        notifyParentState({ gridSize: newSize, tokens: updatedTokens });
+    };
+
+    // 🎯 지도 오프셋 미세 조절
+    const nudgeMapOffset = (dx, dy) => {
+        const nextOffset = {
+            x: mapOffset.x + dx,
+            y: mapOffset.y + dy
+        };
+        setMapOffset(nextOffset);
+        notifyParentState({ mapOffset: nextOffset });
+    };
+
     // 🗺️ 지도 업로드
-    const handleMapUpload = (e) => {
+    const handleMapUpload = async (e) => {
         const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
 
-        const readPromises = files.map(file => new Promise(res => {
-            const reader = new FileReader();
-            reader.onload = ev => res({ id: Date.now() + Math.random(), name: file.name.replace(/\.[^/.]+$/, ""), url: ev.target.result });
-            reader.readAsDataURL(file);
-        }));
-
-        Promise.all(readPromises).then(newMaps => {
-            setMaps(prev => [...prev, ...newMaps]);
-            if (!activeMapId && newMaps.length > 0) {
-                setActiveMapId(newMaps[0].id);
-            }
+        const readPromises = files.map(async (file) => {
+            const compressedUrl = await compressImage(file, 1200, 0.7);
+            return {
+                id: Date.now() + Math.random(),
+                name: file.name.replace(/\.[^/.]+$/, ""),
+                url: compressedUrl
+            };
         });
+
+        const newMaps = await Promise.all(readPromises);
+        const nextMaps = [...maps, ...newMaps];
+        const nextActiveId = !activeMapId && newMaps.length > 0 ? newMaps[0].id : activeMapId;
+
+        setMaps(nextMaps);
+        if (!activeMapId && newMaps.length > 0) setActiveMapId(nextActiveId);
+        notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
         e.target.value = '';
     };
 
-    // 🎭 토큰 업로드 (현재 보고 있는 화면 중앙에 생성)
-    const handleTokenUpload = (e) => {
+    // 🎭 토큰 업로드
+    const handleTokenUpload = async (e) => {
         const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
 
-        // 현재 보드 영역의 중심점 좌표 계산 (Zoom 및 Pan 오프셋 반영)
         const boardWidth = boardRef.current ? boardRef.current.offsetWidth : 600;
         const boardHeight = boardRef.current ? boardRef.current.offsetHeight : 400;
         const scaleFactor = mapScale / 100;
-        const tokenSize = 56; // 기본 1칸 크기
 
-        // 🎯 화면 중앙 좌표 계산
-        const centerX = Math.max(0, (boardWidth / 2 - panOffset.x) / scaleFactor - tokenSize / 2);
-        const centerY = Math.max(0, (boardHeight / 2 - panOffset.y) / scaleFactor - tokenSize / 2);
+        const centerX = Math.max(0, (boardWidth / 2 - panOffset.x) / scaleFactor - gridSize / 2);
+        const centerY = Math.max(0, (boardHeight / 2 - panOffset.y) / scaleFactor - gridSize / 2);
 
-        const readPromises = files.map((file, idx) => new Promise(res => {
-            const reader = new FileReader();
-            reader.onload = ev => res({
+        const readPromises = files.map(async (file, idx) => {
+            const compressedUrl = await compressImage(file, 400, 0.8);
+            const posX = centerX + (idx * 12);
+            const posY = centerY + (idx * 12);
+
+            return {
                 id: Date.now() + Math.random(),
                 name: file.name.replace(/\.[^/.]+$/, ""),
-                url: ev.target.result,
-                x: centerX + (idx * 12), // 여러 개 업로드 시 약간의 오프셋 부여
-                y: centerY + (idx * 12),
-                size: tokenSize,
+                url: compressedUrl,
+                x: posX,
+                y: posY,
+                gridPos: calculateGridPos(posX, posY, gridSize),
+                size: gridSize,
                 hp: 30,
                 maxHp: 30
-            });
-            reader.readAsDataURL(file);
-        }));
-
-        Promise.all(readPromises).then(newTokens => {
-            setTokens(prev => [...prev, ...newTokens]);
-            if (newTokens.length > 0) {
-                setSelectedTokenId(newTokens[newTokens.length - 1].id);
-            }
+            };
         });
+
+        const newTokens = await Promise.all(readPromises);
+        const nextTokens = [...tokens, ...newTokens];
+
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        if (newTokens.length > 0) setSelectedTokenId(newTokens[newTokens.length - 1].id);
+        notifyParentState({ tokens: nextTokens });
         e.target.value = '';
     };
 
-    // 🔍 지도 확대 / 축소 (최대 10%까지 축소 가능)
+    // 🔍 전체 확대/축소
     const handleZoom = (delta) => {
-        setMapScale(prev => Math.max(10, Math.min(200, prev + delta)));
+        const newScale = Math.max(10, Math.min(200, mapScale + delta));
+        setMapScale(newScale);
+        notifyParentState({ mapScale: newScale });
     };
 
-    // 🔄 지도 위치 & 배율 초기화
     const resetMapView = () => {
         setMapScale(100);
         setPanOffset({ x: 0, y: 0 });
+        setMapOffset({ x: 0, y: 0 });
+        notifyParentState({ mapScale: 100, panOffset: { x: 0, y: 0 }, mapOffset: { x: 0, y: 0 } });
     };
 
-    // 🖐️ 지도 바탕 터치/클릭 시작
+    // 🖐️ 지도 바탕 드래그 시작
     const handleBoardStart = (e) => {
         setSelectedTokenId(null);
-
-        // 지도 잠금 상태라면 드래그 이동 금지
-        if (isMapLocked) return;
-
         const pos = getPos(e);
-        setIsPanning(true);
-        panStartRef.current = {
-            x: pos.x - panOffset.x,
-            y: pos.y - panOffset.y
-        };
+
+        if (isAlignMode) {
+            setIsPanning(true);
+            alignStartRef.current = {
+                x: pos.x - (mapOffset.x * (mapScale / 100)),
+                y: pos.y - (mapOffset.y * (mapScale / 100))
+            };
+        } else if (!isMapLocked) {
+            setIsPanning(true);
+            panStartRef.current = {
+                x: pos.x - panOffset.x,
+                y: pos.y - panOffset.y
+            };
+        }
     };
 
-    // 🖱️ 토큰 터치/클릭 시작
+    // 🖱️ 토큰 드래그 시작
     const handleTokenStart = (e, token) => {
-        e.stopPropagation(); // 지도 드래그 방지
+        e.stopPropagation();
         const pos = getPos(e);
         setDraggingTokenId(token.id);
 
@@ -132,19 +272,10 @@ const BattleMapPanel = () => {
         };
     };
 
-    // 🖱️ 토큰 클릭 (선택 토글)
-    const handleTokenClick = (e, tokenId) => {
-        e.stopPropagation();
-        if (!dragRef.current.isDragging) {
-            setSelectedTokenId(prev => (prev === tokenId ? null : tokenId));
-        }
-    };
-
-    // 🖱️ 이동 처리 (터치 & 마우스 공용)
+    // 🖱️ 이동 처리
     const handleMove = (e) => {
         const pos = getPos(e);
 
-        // 1. 토큰 이동 중
         if (draggingTokenId) {
             const scaleFactor = mapScale / 100;
             const deltaX = (pos.x - dragRef.current.startX) / scaleFactor;
@@ -154,93 +285,113 @@ const BattleMapPanel = () => {
                 dragRef.current.isDragging = true;
             }
 
-            setTokens(prev => prev.map(t => {
-                if (t.id === draggingTokenId) {
-                    return {
-                        ...t,
-                        x: Math.max(0, dragRef.current.tokenX + deltaX),
-                        y: Math.max(0, dragRef.current.tokenY + deltaY)
-                    };
-                }
-                return t;
-            }));
-        }
-        // 2. 지도 드래그 이동 중 (잠금 해제 상태일 때만)
-        else if (isPanning && !isMapLocked) {
-            setPanOffset({
-                x: pos.x - panStartRef.current.x,
-                y: pos.y - panStartRef.current.y
+            setTokens(prev => {
+                const nextTokens = prev.map(t => {
+                    if (t.id === draggingTokenId) {
+                        const newX = dragRef.current.tokenX + deltaX;
+                        const newY = dragRef.current.tokenY + deltaY;
+                        return {
+                            ...t,
+                            x: newX,
+                            y: newY,
+                            gridPos: calculateGridPos(newX, newY, gridSize)
+                        };
+                    }
+                    return t;
+                });
+                tokensRef.current = nextTokens;
+                return nextTokens;
             });
+        } else if (isPanning) {
+            if (isAlignMode) {
+                const scaleFactor = mapScale / 100;
+                setMapOffset({
+                    x: (pos.x - alignStartRef.current.x) / scaleFactor,
+                    y: (pos.y - alignStartRef.current.y) / scaleFactor
+                });
+            } else if (!isMapLocked) {
+                setPanOffset({
+                    x: pos.x - panStartRef.current.x,
+                    y: pos.y - panStartRef.current.y
+                });
+            }
         }
     };
 
     const handleEnd = () => {
+        if (draggingTokenId || isPanning) {
+            notifyParentState({
+                tokens: tokensRef.current,
+                panOffset,
+                mapOffset
+            });
+        }
         setDraggingTokenId(null);
         setIsPanning(false);
     };
 
-    // 📏 토큰 크기 조절
     const changeTokenSize = (id, delta) => {
-        setTokens(prev => prev.map(t => {
-            if (t.id === id) {
-                const currentSize = t.size ?? 56;
-                return { ...t, size: Math.max(28, Math.min(300, currentSize + delta)) };
-            }
-            return t;
-        }));
+        const nextTokens = tokens.map(t => t.id === id ? { ...t, size: Math.max(20, Math.min(350, (t.size ?? gridSize) + delta)) } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
     };
 
-    const setTokenPresetSize = (id, presetSize) => {
-        setTokens(prev => prev.map(t => t.id === id ? { ...t, size: presetSize } : t));
+    const setTokenPresetSize = (id, multiplier) => {
+        const targetSize = gridSize * multiplier;
+        const nextTokens = tokens.map(t => t.id === id ? { ...t, size: targetSize } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
     };
 
-    // ❤️ 체력 조절
+    // ❤️ HP 증감 버튼 조작
     const changeTokenHp = (id, amount) => {
-        setTokens(prev => prev.map(t => {
+        const nextTokens = tokens.map(t => {
             if (t.id === id) {
                 const maxHp = t.maxHp ?? 30;
-                const currentHp = t.hp ?? maxHp;
-                return { ...t, hp: Math.max(0, Math.min(maxHp, currentHp + amount)), maxHp };
+                return { ...t, hp: Math.max(0, Math.min(maxHp, (t.hp ?? maxHp) + amount)) };
             }
             return t;
-        }));
+        });
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
     };
 
-    const promptSetHp = (token) => {
-        const maxHp = token.maxHp ?? 30;
-        const currentHp = token.hp ?? maxHp;
-        const input = window.prompt(`[${token.name}] 의 현재 HP:`, `${currentHp}`);
-        if (input !== null && !isNaN(input) && input.trim() !== '') {
-            const val = parseInt(input, 10);
-            setTokens(prev => prev.map(t => t.id === token.id ? { ...t, hp: Math.max(0, Math.min(maxHp, val)), maxHp } : t));
-        }
+    // ✏️ HP / MaxHP 직접 입력 조작
+    const handleHpDirectChange = (id, field, rawValue) => {
+        const parsedVal = parseInt(rawValue, 10);
+        const val = isNaN(parsedVal) ? 0 : Math.max(0, parsedVal);
+
+        const nextTokens = tokens.map(t => {
+            if (t.id === id) {
+                const newMax = field === 'maxHp' ? val : (t.maxHp ?? 30);
+                const newHp = field === 'hp' ? val : (t.hp ?? newMax);
+                return {
+                    ...t,
+                    hp: Math.min(newHp, newMax),
+                    maxHp: newMax
+                };
+            }
+            return t;
+        });
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
     };
 
-    const promptSetMaxHp = (token) => {
-        const maxHp = token.maxHp ?? 30;
-        const currentHp = token.hp ?? maxHp;
-        const input = window.prompt(`[${token.name}] 의 최대 HP(Max HP):`, `${maxHp}`);
-        if (input !== null && !isNaN(input) && input.trim() !== '') {
-            const maxVal = Math.max(1, parseInt(input, 10));
-            setTokens(prev => prev.map(t => t.id === token.id ? { ...t, maxHp: maxVal, hp: Math.min(currentHp, maxVal) } : t));
-        }
-    };
-
-    // 🗑️ 제거 기능
     const removeToken = (id) => {
-        setTokens(prev => prev.filter(t => t.id !== id));
+        const nextTokens = tokens.filter(t => t.id !== id);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
         if (selectedTokenId === id) setSelectedTokenId(null);
-    };
-
-    const removeActiveMap = () => {
-        if (!activeMapId) return;
-        const filtered = maps.filter(m => m.id !== activeMapId);
-        setMaps(filtered);
-        setActiveMapId(filtered.length > 0 ? filtered[0].id : null);
+        notifyParentState({ tokens: nextTokens });
     };
 
     const activeMap = maps.find(m => m.id === activeMapId);
     const selectedToken = tokens.find(t => t.id === selectedTokenId);
+    const currentGridStyle = GRID_COLORS[gridColorKey] || GRID_COLORS.amber;
 
     return (
         <div
@@ -253,155 +404,241 @@ const BattleMapPanel = () => {
         >
             {/* 🛠️ 상단 컨트롤 바 */}
             <div className="flex flex-wrap gap-2 items-center justify-between pb-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-                <div className="flex items-center gap-1.5">
-                    <h4 className="text-xs font-bold" style={{ color: 'var(--accent-color)' }}>
-                        🗺️ 인터랙티브 전투 지도
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <h4 className="text-xs font-bold mr-1" style={{ color: 'var(--accent-color)' }}>
+                        🗺️ 전투 지도
                     </h4>
 
-                    {/* 🔒 지도 잠금 / 해제 토글 버튼 */}
+                    {/* 🎯 지도 위치 맞춤 버튼 */}
                     <button
                         type="button"
-                        onClick={() => setIsMapLocked(!isMapLocked)}
+                        onClick={() => setIsAlignMode(!isAlignMode)}
                         className={`text-[0.7rem] px-2 py-0.5 rounded border font-bold transition-all ${
-                            isMapLocked 
-                                ? 'bg-red-900/90 text-red-200 border-red-600 shadow-[0_0_8px_rgba(220,38,38,0.5)]' 
+                            isAlignMode 
+                                ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.6)] animate-pulse' 
                                 : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                         }`}
-                        title={isMapLocked ? "지도 드래그 이동 불가" : "지도 드래그 이동 가능"}
+                        title="격자 선에 맞춰 지도를 직접 움직입니다."
                     >
-                        {isMapLocked ? '🔒 지도 잠김' : '🔓 지도 이동'}
+                        {isAlignMode ? '🎯 지도 맞춤 중 (드래그로 이동)' : '🎯 위치 맞춤'}
                     </button>
 
+                    {/* 🔒 지도 이동 잠금 토글 */}
+                    {!isAlignMode && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsMapLocked(!isMapLocked);
+                                notifyParentState({ isMapLocked: !isMapLocked });
+                            }}
+                            className={`text-[0.7rem] px-2 py-0.5 rounded border font-bold transition-all ${
+                                isMapLocked 
+                                    ? 'bg-red-900/90 text-red-200 border-red-600 shadow-[0_0_8px_rgba(220,38,38,0.5)]' 
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                            }`}
+                        >
+                            {isMapLocked ? '🔒 지도 잠김' : '🔓 지도 이동'}
+                        </button>
+                    )}
+
+                    {/* 🔲 격자 토글 */}
                     <button
                         type="button"
-                        onClick={() => setShowGrid(!showGrid)}
-                        className={`text-[0.7rem] px-2 py-0.5 rounded border transition-colors ${showGrid ? 'bg-[var(--accent-color)] text-black font-bold' : 'text-[var(--text-muted)]'}`}
-                        style={{ borderColor: 'var(--border-color)' }}
+                        onClick={() => {
+                            setShowGrid(!showGrid);
+                            notifyParentState({ showGrid: !showGrid });
+                        }}
+                        className={`text-[0.7rem] px-2 py-0.5 rounded border transition-colors font-bold ${
+                            showGrid ? 'bg-amber-500 text-black border-amber-400' : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}
                     >
-                        {showGrid ? '격자 켜짐' : '격자 꺼짐'}
+                        {showGrid ? '▦ 격자 켜짐' : '▢ 격자 꺼짐'}
                     </button>
+
+                    {/* 📐 격자 크기 조절 */}
+                    {showGrid && (
+                        <div className="flex items-center gap-1 bg-slate-900/90 px-1.5 py-0.5 rounded border border-amber-500/40 text-xs">
+                            <span className="text-[0.65rem] text-slate-400 font-bold">격자:</span>
+                            <button
+                                type="button"
+                                onClick={() => handleGridSizeChange(-4)}
+                                className="px-1 py-0 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-amber-300 font-bold rounded text-[0.65rem]"
+                            >
+                                -
+                            </button>
+                            <span className="text-[0.7rem] font-mono min-w-[32px] text-center font-bold text-amber-400">
+                                {gridSize}px
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => handleGridSizeChange(4)}
+                                className="px-1 py-0 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-amber-300 font-bold rounded text-[0.65rem]"
+                            >
+                                +
+                            </button>
+                        </div>
+                    )}
+
+                    {/* 🎨 격자 색상 팔레트 */}
+                    {showGrid && (
+                        <div className="flex items-center gap-1 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-700 text-xs">
+                            {Object.keys(GRID_COLORS).map((key) => (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => {
+                                        setGridColorKey(key);
+                                        notifyParentState({ gridColorKey: key });
+                                    }}
+                                    className={`text-[0.65rem] px-1.5 py-0.2 rounded font-bold transition-all ${
+                                        gridColorKey === key
+                                            ? 'bg-amber-500 text-black ring-1 ring-amber-300 scale-105'
+                                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                    }`}
+                                >
+                                    {GRID_COLORS[key].name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
-                {/* 🔍 지도 크기 & 위치 컨트롤 (10% ~ 200%) */}
-                <div className="flex items-center gap-1 bg-slate-900/80 px-2 py-0.5 rounded border border-slate-700 text-xs">
-                    <button onClick={() => handleZoom(-10)} className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded font-bold">-</button>
-                    <span className="text-[0.72rem] font-mono min-w-[36px] text-center font-bold text-amber-400">{mapScale}%</span>
-                    <button onClick={() => handleZoom(10)} className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded font-bold">+</button>
-                    <button onClick={resetMapView} className="text-[0.65rem] px-1.5 py-0.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold" title="원위치 및 100% 리셋">🔄</button>
-                </div>
+                {/* 🔍 지도 배율 조절 및 업로드 */}
+                <div className="flex items-center gap-1.5">
+                    {isAlignMode && (
+                        <div className="flex items-center gap-1 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/60 text-xs animate-fadeIn">
+                            <span className="text-[0.65rem] text-amber-300 font-bold mr-0.5">미세이동:</span>
+                            <button onClick={() => nudgeMapOffset(-1, 0)} className="px-1.5 py-0.2 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold text-[0.65rem]">←</button>
+                            <button onClick={() => nudgeMapOffset(1, 0)} className="px-1.5 py-0.2 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold text-[0.65rem]">→</button>
+                            <button onClick={() => nudgeMapOffset(0, -1)} className="px-1.5 py-0.2 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold text-[0.65rem]">↑</button>
+                            <button onClick={() => nudgeMapOffset(0, 1)} className="px-1.5 py-0.2 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold text-[0.65rem]">↓</button>
+                            <button
+                                onClick={() => { setMapOffset({ x: 0, y: 0 }); notifyParentState({ mapOffset: { x: 0, y: 0 } }); }}
+                                className="text-[0.6rem] px-1 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold ml-1"
+                            >
+                                초기화
+                            </button>
+                        </div>
+                    )}
 
-                <div className="flex items-center gap-2">
-                    <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded bg-[var(--primary-color,#4a5568)] text-white hover:opacity-90">
-                        <span>➕ 지도</span>
-                        <input type="file" accept="image/*" multiple className="hidden" onChange={handleMapUpload} />
-                    </label>
+                    <div className="flex items-center gap-1 bg-slate-900/80 px-2 py-0.5 rounded border border-slate-700 text-xs">
+                        <button onClick={() => handleZoom(-10)} className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded font-bold">-</button>
+                        <span className="text-[0.72rem] font-mono min-w-[36px] text-center font-bold text-amber-400">{mapScale}%</span>
+                        <button onClick={() => handleZoom(10)} className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded font-bold">+</button>
+                        <button onClick={resetMapView} className="text-[0.65rem] px-1.5 py-0.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold" title="원위치 리셋">🔄</button>
+                    </div>
 
-                    <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded text-white hover:opacity-90" style={{ backgroundColor: 'var(--highlight,#3b82f6)' }}>
-                        <span>🎭 토큰</span>
-                        <input type="file" accept="image/*" multiple className="hidden" onChange={handleTokenUpload} />
-                    </label>
+                    <div className="flex items-center gap-1">
+                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded bg-[var(--primary-color,#4a5568)] text-white hover:opacity-90">
+                            <span>➕ 지도</span>
+                            <input type="file" accept="image/*" multiple className="hidden" onChange={handleMapUpload} />
+                        </label>
+
+                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded text-white hover:opacity-90" style={{ backgroundColor: 'var(--highlight,#3b82f6)' }}>
+                            <span>🎭 토큰</span>
+                            <input type="file" accept="image/*" multiple className="hidden" onChange={handleTokenUpload} />
+                        </label>
+                    </div>
                 </div>
             </div>
 
-            {/* 🗺️ 지도 선택 드롭다운 */}
-            {maps.length > 0 && (
-                <div className="flex items-center gap-2 text-xs">
-                    <span className="text-[var(--text-muted)] font-bold">지도:</span>
-                    <select
-                        value={activeMapId || ''}
-                        onChange={(e) => {
-                            setActiveMapId(Number(e.target.value) || e.target.value);
-                            setSelectedTokenId(null);
-                        }}
-                        className="p-1 rounded text-xs bg-[var(--bg-color)] text-[var(--text-main)] border border-[var(--border-color)] flex-1"
-                    >
-                        {maps.map(m => (
-                            <option key={m.id} value={m.id}>{m.name}</option>
-                        ))}
-                    </select>
-
-                    <button
-                        type="button"
-                        onClick={removeActiveMap}
-                        className="px-2 py-1 bg-red-900/60 hover:bg-red-800 text-red-200 border border-red-700/50 rounded text-[0.7rem]"
-                    >
-                        🗑️ 제거
-                    </button>
-                </div>
-            )}
-
-            {/* 🎮 전투 지도 메인 뷰포트 영역 */}
+            {/* 🎮 메인 전투 지도 뷰포트 */}
             <div
                 ref={boardRef}
                 onMouseDown={handleBoardStart}
                 onTouchStart={handleBoardStart}
-                className={`relative w-full min-h-[420px] max-h-[600px] rounded-lg overflow-hidden border flex items-center justify-center bg-black/60 ${
-                    isMapLocked ? 'cursor-default' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')
+                className={`relative w-full min-h-[440px] max-h-[600px] rounded-lg overflow-hidden border flex items-center justify-center bg-slate-950 ${
+                    isAlignMode 
+                        ? 'cursor-move border-amber-500/80' 
+                        : (isMapLocked ? 'cursor-default' : (isPanning ? 'cursor-grabbing' : 'cursor-grab'))
                 }`}
-                style={{ borderColor: 'var(--border-color)' }}
+                style={{ borderColor: isAlignMode ? '#f59e0b' : 'var(--border-color)' }}
             >
-                {/* 🖐️ 지도 Pan & Zoom Container */}
+                {/* 🔍 Pan & Zoom 뷰포트 */}
                 <div
-                    className="relative select-none"
+                    className="relative select-none w-full h-full"
                     style={{
                         transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapScale / 100})`,
-                        transition: isPanning ? 'none' : 'transform 0.1s ease-out',
-                        backgroundImage: showGrid ? 'radial-gradient(circle, rgba(255,255,255,0.18) 1px, transparent 1px)' : 'none',
-                        backgroundSize: '30px 30px'
+                        transition: isPanning ? 'none' : 'transform 0.1s ease-out'
                     }}
                 >
-                    {/* 1. 배경 지도 */}
+                    {/* 🖼️ 1. 배경 지도 */}
                     {activeMap ? (
-                        <img src={activeMap.url} alt={activeMap.name} className="max-w-none pointer-events-none select-none block" />
+                        <div
+                            className="absolute left-0 top-0 transition-none pointer-events-none"
+                            style={{ transform: `translate(${mapOffset.x}px, ${mapOffset.y}px)` }}
+                        >
+                            <img src={activeMap.url} alt={activeMap.name} className="max-w-none block select-none opacity-90" />
+                        </div>
                     ) : (
-                        <div className="text-center p-16 text-xs text-[var(--text-muted)] w-[600px] h-[400px] flex flex-col items-center justify-center">
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-xs text-[var(--text-muted)]">
                             <p className="font-bold mb-1">🗺️ 등록된 지도가 없습니다.</p>
                             <p className="text-[0.7rem]">상단 [➕ 지도]를 눌러 이미지 파일을 업로드해 주세요.</p>
                         </div>
                     )}
 
-                    {/* 2. 토큰 레이어 */}
+                    {/* ▦ 2. 격자 오버레이 */}
+                    {showGrid && (
+                        <div
+                            className="absolute inset-0 pointer-events-none z-10 min-w-[3000px] min-h-[3000px]"
+                            style={{
+                                backgroundImage: `
+                                    linear-gradient(to right, ${currentGridStyle.line} 1.5px, transparent 1.5px),
+                                    linear-gradient(to bottom, ${currentGridStyle.line} 1.5px, transparent 1.5px)
+                                `,
+                                backgroundSize: `${gridSize}px ${gridSize}px`,
+                                filter: `drop-shadow(0px 0px 1px ${currentGridStyle.shadow})`
+                            }}
+                        />
+                    )}
+
+                    {/* 🎭 3. 토큰 레이어 */}
                     {tokens.map((token) => {
                         const isSelected = selectedTokenId === token.id;
-                        const size = token.size ?? 56;
+                        const size = token.size ?? gridSize;
                         const maxHp = token.maxHp ?? 30;
                         const hp = token.hp ?? maxHp;
                         const hpPercent = maxHp > 0 ? Math.round((hp / maxHp) * 100) : 0;
-                        const hpColorClass = hpPercent > 50 ? 'bg-emerald-500' : (hpPercent > 20 ? 'bg-amber-500' : 'bg-red-600');
 
                         return (
                             <div
                                 key={token.id}
                                 onMouseDown={(e) => handleTokenStart(e, token)}
                                 onTouchStart={(e) => handleTokenStart(e, token)}
-                                onClick={(e) => handleTokenClick(e, token.id)}
-                                className="absolute cursor-grab active:cursor-grabbing group"
+                                onClick={(e) => {
+                                    if (!isAlignMode) {
+                                        e.stopPropagation();
+                                        if (!dragRef.current.isDragging) {
+                                            setSelectedTokenId(prev => (prev === token.id ? null : token.id));
+                                        }
+                                    }
+                                }}
+                                className="absolute cursor-grab active:cursor-grabbing z-20"
                                 style={{
                                     left: `${token.x}px`,
                                     top: `${token.y}px`,
                                     width: `${size}px`,
-                                    height: `${size}px`,
-                                    zIndex: isSelected ? 40 : 10
+                                    height: `${size}px`
                                 }}
                             >
-                                {/* HP 미니 바 */}
-                                <div className="absolute -top-2.5 left-0 w-full h-1.5 bg-black/80 rounded-full overflow-hidden border border-slate-700/60">
-                                    <div className={`h-full transition-all duration-300 ${hpColorClass}`} style={{ width: `${hpPercent}%` }} />
+                                {/* HP 바 */}
+                                <div className="absolute -top-2.5 left-0 w-full h-1.5 bg-black/80 rounded-full overflow-hidden border border-slate-700">
+                                    <div className="h-full bg-emerald-500 transition-all" style={{ width: `${hpPercent}%` }} />
                                 </div>
 
-                                {/* 토큰 원형 이미지 & 활성화 하이라이트 링 */}
-                                <div className={`w-full h-full rounded-full transition-all duration-150 ${
+                                {/* 토큰 이미지 */}
+                                <div className={`w-full h-full rounded-full ${
                                     isSelected 
-                                        ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black/80 scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]' 
-                                        : 'hover:border-amber-400 border-2 border-amber-500/60'
+                                        ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]' 
+                                        : 'border-2 border-amber-500/70 hover:border-amber-400'
                                 }`}>
-                                    <img src={token.url} alt={token.name} className="w-full h-full object-cover rounded-full pointer-events-none bg-black/50" />
+                                    <img src={token.url} alt={token.name} className="w-full h-full object-cover rounded-full pointer-events-none" />
                                 </div>
 
-                                {/* 비활성화 시 하단 라벨 */}
+                                {/* 실시간 좌표 라벨 */}
                                 {!isSelected && (
-                                    <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[0.6rem] text-slate-300 bg-black/80 px-1 py-0.2 rounded whitespace-nowrap pointer-events-none">
-                                        {token.name}
+                                    <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[0.6rem] text-slate-200 bg-black/90 px-1 rounded whitespace-nowrap pointer-events-none">
+                                        {token.name} <span className="text-amber-400 font-bold font-mono">({token.gridPos || 'A1'})</span>
                                     </div>
                                 )}
                             </div>
@@ -409,84 +646,78 @@ const BattleMapPanel = () => {
                     })}
                 </div>
 
-                {/* 📱 모바일 최적화 하단 컨트롤 시트 */}
-                {selectedToken && (
+                {/* 🎛️ 선택된 토큰 하단 컨트롤 시트 */}
+                {selectedToken && !isAlignMode && (
                     <div
                         onMouseDown={(e) => e.stopPropagation()}
                         onTouchStart={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
-                        className="absolute bottom-2 left-2 right-2 z-50 bg-slate-900/95 text-white rounded-xl p-2.5 border-2 border-amber-500/80 shadow-2xl backdrop-blur-md max-w-md mx-auto flex flex-col gap-2 animate-fadeIn"
+                        className="absolute bottom-2 left-2 right-2 z-50 bg-slate-900/95 text-white rounded-xl p-2.5 border-2 border-amber-500/80 shadow-2xl backdrop-blur-md max-w-md mx-auto flex flex-col gap-2"
                     >
-                        {/* 상단: 토큰 이름 & 삭제 & 닫기 */}
                         <div className="flex items-center justify-between border-b border-slate-700/80 pb-1.5">
                             <div className="flex items-center gap-2">
-                                <span className="w-3 h-3 rounded-full bg-amber-400 animate-pulse" />
-                                <span className="text-xs font-bold text-amber-300 truncate max-w-[150px]">
-                                    {selectedToken.name}
+                                <span className="text-xs font-bold text-amber-300">{selectedToken.name}</span>
+                                <span className="text-[0.68rem] bg-amber-950 text-amber-400 px-1.5 py-0.5 rounded border border-amber-800 font-mono font-bold">
+                                    좌표: {selectedToken.gridPos || 'A1'}
                                 </span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                                <button
-                                    type="button"
-                                    onClick={() => removeToken(selectedToken.id)}
-                                    className="px-2 py-0.5 text-[0.68rem] bg-red-600/80 hover:bg-red-600 text-white font-bold rounded transition-colors"
-                                >
-                                    🗑️ 삭제
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedTokenId(null)}
-                                    className="px-2 py-0.5 text-[0.68rem] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 font-bold"
-                                >
-                                    ✖️ 닫기
-                                </button>
+                                <button onClick={() => removeToken(selectedToken.id)} className="px-2 py-0.5 text-[0.68rem] bg-red-600/80 hover:bg-red-600 text-white font-bold rounded">🗑️ 삭제</button>
+                                <button onClick={() => setSelectedTokenId(null)} className="px-2 py-0.5 text-[0.68rem] bg-slate-800 text-slate-300 rounded border border-slate-700">✖️ 닫기</button>
                             </div>
                         </div>
 
-                        {/* 중단: HP 조절 & 크기 조절 */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {/* ❤️ HP 컨트롤 */}
+                        <div className="grid grid-cols-2 gap-2 text-[0.7rem]">
+                            {/* ❤️ HP 설정 칸 (직접 입력 input 포함) */}
                             <div className="flex flex-col gap-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
-                                <div className="flex items-center justify-between text-[0.7rem]">
-                                    <span className="text-slate-400 font-bold">❤️ HP</span>
-                                    <div className="flex items-center gap-1">
-                                        <button onClick={() => promptSetHp(selectedToken)} className="font-bold text-amber-300 hover:underline">
-                                            {selectedToken.hp ?? selectedToken.maxHp ?? 30}
-                                        </button>
-                                        <span className="text-slate-500">/</span>
-                                        <button onClick={() => promptSetMaxHp(selectedToken)} className="text-slate-400 hover:underline">
-                                            {selectedToken.maxHp ?? 30}
-                                        </button>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-slate-400 font-bold">❤️ HP 설정</span>
+                                    <div className="flex items-center gap-1 font-mono">
+                                        <input
+                                            type="number"
+                                            value={selectedToken.hp ?? 30}
+                                            onChange={(e) => handleHpDirectChange(selectedToken.id, 'hp', e.target.value)}
+                                            className="w-11 text-center bg-slate-900 text-amber-300 border border-amber-500/50 rounded text-[0.7rem] font-bold p-0.5 focus:outline-none focus:border-amber-400"
+                                            title="현재 HP 직접 입력"
+                                        />
+                                        <span className="text-slate-500 font-bold">/</span>
+                                        <input
+                                            type="number"
+                                            value={selectedToken.maxHp ?? 30}
+                                            onChange={(e) => handleHpDirectChange(selectedToken.id, 'maxHp', e.target.value)}
+                                            className="w-11 text-center bg-slate-900 text-slate-300 border border-slate-700 rounded text-[0.7rem] font-bold p-0.5 focus:outline-none focus:border-slate-500"
+                                            title="최대 HP 직접 입력"
+                                        />
                                     </div>
                                 </div>
-                                <div className="grid grid-cols-4 gap-1 text-[0.65rem] font-bold mt-1">
-                                    <button onClick={() => changeTokenHp(selectedToken.id, -5)} className="py-1 rounded bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-200">-5</button>
-                                    <button onClick={() => changeTokenHp(selectedToken.id, -1)} className="py-1 rounded bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-200">-1</button>
-                                    <button onClick={() => changeTokenHp(selectedToken.id, 1)} className="py-1 rounded bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-800 text-emerald-200">+1</button>
-                                    <button onClick={() => changeTokenHp(selectedToken.id, 5)} className="py-1 rounded bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-800 text-emerald-200">+5</button>
+                                <div className="grid grid-cols-4 gap-1 font-bold mt-1">
+                                    <button onClick={() => changeTokenHp(selectedToken.id, -5)} className="py-1 rounded bg-red-950 border border-red-800 text-red-200 hover:bg-red-900">-5</button>
+                                    <button onClick={() => changeTokenHp(selectedToken.id, -1)} className="py-1 rounded bg-red-950 border border-red-800 text-red-200 hover:bg-red-900">-1</button>
+                                    <button onClick={() => changeTokenHp(selectedToken.id, 1)} className="py-1 rounded bg-emerald-950 border border-emerald-800 text-emerald-200 hover:bg-emerald-900">+1</button>
+                                    <button onClick={() => changeTokenHp(selectedToken.id, 5)} className="py-1 rounded bg-emerald-950 border border-emerald-800 text-emerald-200 hover:bg-emerald-900">+5</button>
                                 </div>
                             </div>
 
-                            {/* 📏 크기 조절 */}
-                            <div className="flex flex-col gap-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800 text-[0.7rem]">
+                            {/* 📏 크기 조절 칸 */}
+                            <div className="flex flex-col gap-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
                                 <div className="flex items-center justify-between text-slate-400 font-bold">
-                                    <span>📏 크기</span>
-                                    <span className="text-amber-300 font-mono text-[0.68rem]">{selectedToken.size ?? 56}px</span>
+                                    <span>📏 크기 조절</span>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={() => changeTokenSize(selectedToken.id, -4)} className="px-1.5 py-0.5 bg-slate-800 text-amber-300 rounded border border-slate-700">-</button>
+                                        <span className="text-amber-300 font-mono">{selectedToken.size ?? gridSize}px</span>
+                                        <button onClick={() => changeTokenSize(selectedToken.id, 4)} className="px-1.5 py-0.5 bg-slate-800 text-amber-300 rounded border border-slate-700">+</button>
+                                    </div>
                                 </div>
-                                <div className="grid grid-cols-3 gap-1 text-[0.65rem] font-bold mt-1">
-                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 56)} className={`py-1 rounded border ${(selectedToken.size ?? 56) === 56 ? 'bg-amber-600 border-amber-400 text-white' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>1칸</button>
-                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 112)} className={`py-1 rounded border ${(selectedToken.size ?? 56) === 112 ? 'bg-amber-600 border-amber-400 text-white' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>2칸</button>
-                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 168)} className={`py-1 rounded border ${(selectedToken.size ?? 56) === 168 ? 'bg-amber-600 border-amber-400 text-white' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>3칸</button>
+                                <div className="grid grid-cols-3 gap-1 font-bold mt-1">
+                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 1)} className="py-1 rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700">1칸</button>
+                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 2)} className="py-1 rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700">2칸</button>
+                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 3)} className="py-1 rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700">3칸</button>
                                 </div>
                             </div>
                         </div>
                     </div>
                 )}
             </div>
-
-            <p className="text-[0.68rem] text-[var(--text-muted)] text-center">
-                💡 지도 축소는 **10%**까지 지원되며, 새 토큰 추가 시 현재 보고 계신 화면 바로 중앙에 생성됩니다.
-            </p>
         </div>
     );
 };
