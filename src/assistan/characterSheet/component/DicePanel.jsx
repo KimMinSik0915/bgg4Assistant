@@ -33,6 +33,45 @@ import d20BadgeIcon from "../resource/diceIcons/d20.svg";
 const DICE_LIST = [4, 6, 8, 10, 12, 20];
 const EMPTY_QUEUE = { 4: 0, 6: 0, 8: 0, 10: 0, 12: 0, 20: 0 };
 
+// 🖐️ 플로팅 버튼(FAB)을 화면 아무 데나 드래그해서 옮길 수 있게 하는 설정.
+// 위치는 뷰포트 좌상단 기준 px(top/left)로 저장하고, 다음 방문 때도 같은 자리에 뜨도록 localStorage에 남긴다.
+const FAB_SIZE = 64; // h-16 w-16
+const FAB_EDGE_MARGIN = 12;
+const FAB_DRAG_THRESHOLD = 6; // 이보다 적게 움직이면 드래그가 아니라 탭/클릭으로 취급
+const FAB_POSITION_STORAGE = "cs_dice_fab_position";
+
+const clampFabPosition = ({ top, left }) => {
+  const maxLeft = Math.max(
+    FAB_EDGE_MARGIN,
+    window.innerWidth - FAB_SIZE - FAB_EDGE_MARGIN,
+  );
+  const maxTop = Math.max(
+    FAB_EDGE_MARGIN,
+    window.innerHeight - FAB_SIZE - FAB_EDGE_MARGIN,
+  );
+  return {
+    left: Math.min(maxLeft, Math.max(FAB_EDGE_MARGIN, left)),
+    top: Math.min(maxTop, Math.max(FAB_EDGE_MARGIN, top)),
+  };
+};
+
+const defaultFabPosition = () =>
+  clampFabPosition({ top: 80, left: window.innerWidth - FAB_SIZE - 20 }); // 기존 top-20 right-5 자리
+
+const loadFabPosition = () => {
+  try {
+    const raw = window.localStorage.getItem(FAB_POSITION_STORAGE);
+    if (!raw) return defaultFabPosition();
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.top !== "number" || typeof parsed.left !== "number") {
+      return defaultFabPosition();
+    }
+    return clampFabPosition(parsed); // 저장 이후 화면 크기가 바뀌었을 수 있으니 항상 다시 클램프
+  } catch (e) {
+    return defaultFabPosition();
+  }
+};
+
 // 결과가 화면 한가운데 등장해서 얼마나 오래 머물렀다가(HOLD) 손이 화면을 가로지르며 널브러진
 // 주사위들을 회수해가는 연출(EXIT)에 들어갈지. EXIT_MS는 characterSheet.css의
 // cs-hand-collect / cs-result-collected 애니메이션 길이(1.1s)와 맞춰야 한다.
@@ -210,7 +249,107 @@ const DicePanel = () => {
   const [diceQueue, setDiceQueue] = useState(EMPTY_QUEUE);
   const [isRolling, setIsRolling] = useState(false);
   const [overlay, setOverlay] = useState(null); // { mode, phase, sides, value, results, total, text }
+  const [fabPosition, setFabPosition] = useState(loadFabPosition); // { top, left } - 드래그로 옮긴 FAB 위치
   const timersRef = useRef([]);
+
+  // 🖐️ FAB 드래그 상태 - 리렌더를 유발하지 않는 ref로 추적 (moved는 클릭과 드래그를 구분하는 데 쓰인다)
+  const fabDragRef = useRef({
+    dragging: false,
+    moved: false,
+    startX: 0,
+    startY: 0,
+    startTop: 0,
+    startLeft: 0,
+  });
+
+  // 화면 크기가 바뀌면(브라우저 창 리사이즈, 기기 회전 등) 저장된 위치가 화면 밖으로 나가지 않도록 다시 클램프
+  useEffect(() => {
+    const handleResize = () =>
+      setFabPosition((prev) => clampFabPosition(prev));
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const handleFabDragMove = useCallback((e) => {
+    const state = fabDragRef.current;
+    if (!state.dragging) return;
+    const point = e.touches ? e.touches[0] : e;
+    if (!point) return;
+    const dx = point.clientX - state.startX;
+    const dy = point.clientY - state.startY;
+
+    if (!state.moved && Math.hypot(dx, dy) > FAB_DRAG_THRESHOLD) {
+      state.moved = true;
+    }
+    if (state.moved) {
+      if (e.cancelable) e.preventDefault(); // 드래그 중엔 페이지 스크롤/당겨서 새로고침 방지
+      setFabPosition(
+        clampFabPosition({ top: state.startTop + dy, left: state.startLeft + dx }),
+      );
+    }
+  }, []);
+
+  const handleFabDragEnd = useCallback(() => {
+    const state = fabDragRef.current;
+    window.removeEventListener("mousemove", handleFabDragMove);
+    window.removeEventListener("mouseup", handleFabDragEnd);
+    window.removeEventListener("touchmove", handleFabDragMove);
+    window.removeEventListener("touchend", handleFabDragEnd);
+
+    if (state.moved) {
+      setFabPosition((prev) => {
+        try {
+          window.localStorage.setItem(FAB_POSITION_STORAGE, JSON.stringify(prev));
+        } catch (e) {
+          // localStorage 접근 불가 시 위치는 이번 세션 동안만 유지
+        }
+        return prev;
+      });
+    }
+    state.dragging = false;
+    // click 이벤트는 mouseup/touchend 직후 같은 틱에서 동기적으로 뒤따라오므로,
+    // moved 리셋은 다음 틱(setTimeout 0)으로 미뤄서 그 click 핸들러가 "방금 드래그였다"를 볼 수 있게 한다.
+    setTimeout(() => {
+      state.moved = false;
+    }, 0);
+  }, [handleFabDragMove]);
+
+  const handleFabDragStart = useCallback(
+    (e) => {
+      const point = e.touches ? e.touches[0] : e;
+      if (!point) return;
+      fabDragRef.current = {
+        dragging: true,
+        moved: false,
+        startX: point.clientX,
+        startY: point.clientY,
+        startTop: fabPosition.top,
+        startLeft: fabPosition.left,
+      };
+      window.addEventListener("mousemove", handleFabDragMove);
+      window.addEventListener("mouseup", handleFabDragEnd);
+      window.addEventListener("touchmove", handleFabDragMove, { passive: false });
+      window.addEventListener("touchend", handleFabDragEnd);
+    },
+    [fabPosition, handleFabDragMove, handleFabDragEnd],
+  );
+
+  // 드래그 직후에 뒤따라오는 클릭은 무시해서, FAB을 옮기고 손을 뗐을 때 트레이가 실수로 열리지 않게 한다
+  const handleFabClick = () => {
+    if (fabDragRef.current.moved) return;
+    setExpanded((v) => !v);
+  };
+
+  // 언마운트 시(드래그 도중 화면 전환 등) 전역 리스너가 남지 않도록 정리 - 언마운트 후 setState는 하지 않는다
+  useEffect(
+    () => () => {
+      window.removeEventListener("mousemove", handleFabDragMove);
+      window.removeEventListener("mouseup", handleFabDragEnd);
+      window.removeEventListener("touchmove", handleFabDragMove);
+      window.removeEventListener("touchend", handleFabDragEnd);
+    },
+    [handleFabDragMove, handleFabDragEnd],
+  );
 
   const clearTimers = useCallback(() => {
     timersRef.current.forEach(clearTimeout);
@@ -316,6 +455,31 @@ const DicePanel = () => {
     if (isRolling) setExpanded(false);
   }, [isRolling]);
 
+  // 📦 선택 트레이는 FAB이 화면 어디로 옮겨지든 항상 그 옆(화면 안쪽 방향)에 붙어서 펼쳐지도록,
+  // FAB이 화면 아래쪽/오른쪽에 있으면 각각 위쪽/왼쪽으로 열리게 방향을 계산한다.
+  const trayOpenUp = fabPosition.top + FAB_SIZE / 2 > window.innerHeight / 2;
+  const trayAlignRight = fabPosition.left + FAB_SIZE / 2 > window.innerWidth / 2;
+  const trayStyle = {
+    borderColor: DICE_ACCENT,
+    background: "rgba(15,17,26,0.92)",
+    backdropFilter: "blur(14px)",
+    boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
+    ...(trayOpenUp
+      ? { bottom: Math.max(8, window.innerHeight - fabPosition.top + 10) }
+      : { top: fabPosition.top + FAB_SIZE + 10 }),
+    ...(trayAlignRight
+      ? { right: Math.max(8, window.innerWidth - fabPosition.left - FAB_SIZE) }
+      : { left: Math.max(8, fabPosition.left) }),
+  };
+  const trayOriginClass = trayOpenUp
+    ? trayAlignRight
+      ? "origin-bottom-right"
+      : "origin-bottom-left"
+    : trayAlignRight
+      ? "origin-top-right"
+      : "origin-top-left";
+  const trayHiddenTranslateClass = trayOpenUp ? "translate-y-3" : "-translate-y-3";
+
   return (
     <>
       {createPortal(
@@ -339,19 +503,14 @@ const DicePanel = () => {
         />
       )}
 
-      {/* 펼쳐지는 선택 트레이 — 상단 FAB 바로 아래로 펼쳐진다 */}
+      {/* 펼쳐지는 선택 트레이 — FAB이 화면 어디에 있든 그 옆(화면 안쪽)으로 펼쳐진다 */}
       <div
-        className={`fixed top-40 right-4 z-[9998] w-[min(320px,calc(100vw-2rem))] origin-top-right rounded-2xl border-2 px-3 py-3 transition-all duration-300 ${
+        className={`fixed z-[9998] w-[min(320px,calc(100vw-2rem))] ${trayOriginClass} rounded-2xl border-2 px-3 py-3 transition-all duration-300 ${
           expanded
             ? "opacity-100 scale-100 translate-y-0"
-            : "pointer-events-none opacity-0 scale-90 -translate-y-3"
+            : `pointer-events-none opacity-0 scale-90 ${trayHiddenTranslateClass}`
         }`}
-        style={{
-          borderColor: DICE_ACCENT,
-          background: "rgba(15,17,26,0.92)",
-          backdropFilter: "blur(14px)",
-          boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
-        }}
+        style={trayStyle}
       >
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-bold text-white/70">
@@ -438,18 +597,23 @@ const DicePanel = () => {
         </div>
       </div>
 
-      {/* 상단 플로팅 버튼(FAB) — 사이트 어느 화면에 있든 항상 떠 있다 */}
+      {/* 🖐️ 플로팅 버튼(FAB) — 사이트 어느 화면에 있든 항상 떠 있고, 화면 아무 데나 드래그해서 옮길 수 있다 */}
       <button
-        onClick={() => setExpanded((v) => !v)}
-        className="fixed top-20 right-5 z-[9999] flex h-16 w-16 items-center justify-center rounded-full border-2 text-white transition-transform active:scale-90"
+        onClick={handleFabClick}
+        onMouseDown={handleFabDragStart}
+        onTouchStart={handleFabDragStart}
+        className="fixed z-[9999] flex h-16 w-16 touch-none select-none items-center justify-center rounded-full border-2 text-white transition-transform active:scale-90 active:cursor-grabbing"
         style={{
+          top: fabPosition.top,
+          left: fabPosition.left,
+          cursor: "grab",
           borderColor: "rgba(255,255,255,0.35)",
           background: FAB_GRADIENT,
           boxShadow: expanded
             ? "0 0 0 6px rgba(255,255,255,0.08), 0 10px 30px rgba(0,0,0,0.5)"
             : "0 10px 30px rgba(0,0,0,0.5)",
         }}
-        title="주사위 굴리기"
+        title="주사위 굴리기 (드래그하면 위치를 옮길 수 있어요)"
       >
         {expanded ? (
           <XIcon size={26} />
