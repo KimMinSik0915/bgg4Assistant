@@ -18,9 +18,9 @@ const GmChatPanel = ({
     };
 
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md" style={{ borderColor : 'var(--border-color)' }}>
+        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] backdrop-blur-md h-full flex flex-col min-h-0 overflow-hidden" style={{ borderColor : 'var(--border-color)' }}>
             <div
-                className="text-base font-bold pb-1.5 mb-3 flex justify-between items-center border-b-2"
+                className="text-base font-bold pb-1.5 mb-3 flex justify-between items-center border-b-2 shrink-0"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}
             >
                 <span>🎲 AI GM 채팅 (Gemini)</span>
@@ -45,7 +45,7 @@ const GmChatPanel = ({
             </div>
 
             {showSettings && (
-                <div className="mb-3 p-2.5 rounded-lg flex flex-col gap-2.5 border" style={{ borderColor : 'var(--border-color)', backgroundColor : 'rgba(0,0,0,0.2)' }}>
+                <div className="cs-scroll mb-3 p-2.5 rounded-lg flex flex-col gap-2.5 border shrink-0 max-h-[45vh] overflow-y-auto" style={{ borderColor : 'var(--border-color)', backgroundColor : 'rgba(0,0,0,0.2)' }}>
                     <label className="text-xs font-bold" style={{ color : 'var(--text-muted)' }}>
                         Gemini API 키
                         <input
@@ -130,10 +130,12 @@ const GmChatPanel = ({
                 </div>
             )}
 
-            {/* 💬 대화창 높이를 260px -> 480px로 넓혀 가독성 대폭 향상 */}
+            {/* 💬 대화창: 패널이 확보한 남은 높이를 모두 채우고 내부에서만 스크롤됨.
+                min-h를 크게 잡으면(과거 220px) 패널이 작아졌을 때 이 영역이 줄어들지 못해 입력창을 밀어내
+                화면 밖으로 넘치므로, 아주 작은 값만 바닥으로 두고 실제로는 flex-1이 남는 공간만큼만 차지하게 한다 */}
             <div
-                className="rounded-lg p-3 mb-3 overflow-y-auto flex flex-col gap-2.5"
-                style={{ maxHeight : '780px', minHeight : '600px', backgroundColor : 'rgba(0,0,0,0.25)' }}
+                className="cs-scroll rounded-lg p-3 mb-3 overflow-y-auto flex flex-col gap-2.5 flex-1 min-h-[40px]"
+                style={{ backgroundColor : 'rgba(0,0,0,0.25)' }}
             >
                 {messages.length === 0 && (
                     <div className="text-xs text-center py-8" style={{ color : 'var(--text-muted)' }}>
@@ -161,7 +163,7 @@ const GmChatPanel = ({
             </div>
 
             {(attachedFiles || []).length > 0 && (
-                <div className="flex flex-col gap-1 mb-1.5">
+                <div className="flex flex-col gap-1 mb-1.5 shrink-0">
                     {attachedFiles.map((f, i) => (
                         <div
                             key={i}
@@ -175,7 +177,7 @@ const GmChatPanel = ({
                 </div>
             )}
 
-            <div className="flex gap-1.5 items-end">
+            <div className="flex gap-1.5 items-end shrink-0">
                 <label
                     className="text-xs px-2.5 py-2 rounded-md cursor-pointer border"
                     style={{ borderColor : 'var(--border-color)', color : 'var(--text-muted)' }}

@@ -1,5 +1,5 @@
-import { Component } from "react";
-import { BookOpenIcon, ChevronUpIcon, ChevronDownIcon, UploadCloudIcon, ArrowLeft, DownloadIcon, RotateCcw } from "lucide-react";
+import { Component, createRef } from "react";
+import { BookOpenIcon, ChevronUpIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, UploadCloudIcon, ArrowLeft, DownloadIcon, RotateCcw, XIcon } from "lucide-react";
 import withNavigate from "../../utils/withNavigate";
 import { normalizeCharacterData } from "../util/normalizeCharacterData";
 import { buildExportJson, downloadJson, sanitizeFileName } from "../util/exportCharacterData";
@@ -23,7 +23,22 @@ import InventoryCard from "../component/InventoryCard";
 const GEMINI_KEY_STORAGE = 'cs_gemini_api_key';
 const GEMINI_MODEL_STORAGE = 'cs_gemini_model';
 const SESSION_STORAGE_KEY = 'cs_trpg_session_data';
+const LAYOUT_STORAGE_KEY = 'cs_workspace_layout';
 const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
+const DEFAULT_CHAT_WIDTH = 380;
+const MIN_CHAT_WIDTH = 300;
+const MAX_CHAT_WIDTH = 640;
+const DEFAULT_SHEET_WIDTH = 300;
+const MIN_SHEET_WIDTH = 240;
+const MAX_SHEET_WIDTH = 560;
+const MOBILE_MEDIA_QUERY = '(max-width: 767px)'; // 데스크탑(지도 메인 3분할) ↔ 모바일 분기 기준
+const DEFAULT_MOBILE_SHEET_HEIGHT = 240;
+const MIN_MOBILE_SHEET_HEIGHT = 160;
+const DEFAULT_MOBILE_CHAT_HEIGHT = 260;
+const MIN_MOBILE_CHAT_HEIGHT = 190; // 헤더+입력창(전송 버튼 포함)이 잘리지 않고 항상 보이는 최소 높이
+const MIN_MOBILE_MAP_HEIGHT = 160; // 지도가 메인이므로 세로 스택에서도 이만큼은 항상 확보
+const MOBILE_RESIZER_SIZE = 20;    // 세로 리사이저 1개의 히트 영역 높이(px)
+const MOBILE_COLLAPSED_SHEET_BAR = 44; // 접힌 캐릭터 시트 바 높이(px)
 
 /**
  * @Author : 김민식
@@ -32,8 +47,7 @@ const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
 class CharacterSheetManager extends Component {
 
     state = {
-        activeTab: 'chat'
-      , sheetSubTab: 'abilities'
+        sheetSubTab: 'abilities'
       , isUploadActive : false
       , originalRawJson : null
       , rawInput : ''
@@ -62,19 +76,77 @@ class CharacterSheetManager extends Component {
       , mapState: null     // 전투지도 저장소
       , isFetchLoading: false
       , fetchError: null
+      , sheetCollapsed: false   // 좌측 캐릭터 시트 접기/펼치기 (데스크탑)
+      , sheetWidth: DEFAULT_SHEET_WIDTH // 좌측 캐릭터 시트 폭(px) - 펼쳤을 때 시트/지도 사이 리사이저로 조절 (데스크탑)
+      , isResizingSheet: false
+      , chatWidth: DEFAULT_CHAT_WIDTH // 우측 채팅 폭(px) - 지도/채팅 사이 리사이저로 조절 (데스크탑)
+      , isResizingChat: false
+      , isMobile: false        // 화면 폭에 따라 데스크탑 3분할 ↔ 모바일 탭 전환
+      , activeTab: 'chat'      // 모바일 탭 모드에서 선택된 탭
+      , mobileViewMode: 'tabs' // 모바일 전용: 'tabs'(전환) ↔ 'all'(지도 메인 + 시트/채팅 상하 배치, 전부 한 화면)
+      , mobileSheetHeight: DEFAULT_MOBILE_SHEET_HEIGHT // 'all' 모드에서 시트를 펼쳤을 때 높이(px)
+      , isResizingMobileSheet: false
+      , mobileChatHeight: DEFAULT_MOBILE_CHAT_HEIGHT   // 'all' 모드에서 하단 채팅 높이(px)
+      , isResizingMobileChat: false
+      , viewportHeight: null   // visualViewport 기반 실제 보이는 높이(px) - 모바일 키보드가 올라와도 화면이 안 가려지게
+      , viewportTop: 0
     }
 
     constructor(props) {
         super(props);
         this.gmHistory = [];
+        this.mobileStackRef = createRef(); // 'all' 모드의 세로 스택 컨테이너 - 리사이즈 시 사용 가능한 높이 측정용
     }
 
     rollTimer = null;
 
     componentDidMount() {
+        // 📱 화면 폭 감지: 데스크탑(지도 메인 3분할) ↔ 모바일(탭 전환) 레이아웃을 JS로 분기
+        // (CSS로 숨기기만 하면 BattleMapPanel/GmChatPanel이 두 벌 동시에 마운트되어 상태가 꼬이므로 실제로 하나만 렌더링한다)
+        this.mobileMql = window.matchMedia(MOBILE_MEDIA_QUERY);
+        this.setState({ isMobile : this.mobileMql.matches });
+        if (this.mobileMql.addEventListener) {
+            this.mobileMql.addEventListener('change', this.handleMobileMqChange);
+        } else if (this.mobileMql.addListener) {
+            this.mobileMql.addListener(this.handleMobileMqChange); // Safari 구버전 호환
+        }
+
+        // ⌨️ 모바일 키보드가 올라와도 화면(특히 하단 채팅 입력창)이 가려지지 않도록,
+        // 워크스페이스 높이를 브라우저의 "실제 보이는 영역"(visualViewport)에 맞춰 계속 갱신한다.
+        // (position:fixed + inset:0 만으로는 키보드가 열려도 레이아웃 뷰포트가 그대로라 안 줄어드는 브라우저가 많음)
+        if (window.visualViewport) {
+            this.visualViewport = window.visualViewport;
+            this.handleVisualViewportChange = () => {
+                this.setState({
+                    viewportHeight : this.visualViewport.height,
+                    viewportTop : this.visualViewport.offsetTop || 0
+                });
+            };
+            this.visualViewport.addEventListener('resize', this.handleVisualViewportChange);
+            this.visualViewport.addEventListener('scroll', this.handleVisualViewportChange);
+            this.handleVisualViewportChange();
+        }
+
         const savedKey = window.localStorage.getItem(GEMINI_KEY_STORAGE);
         let savedModel = window.localStorage.getItem(GEMINI_MODEL_STORAGE);
         if (savedModel === 'gemini-3.6-flash') savedModel = null;
+
+        const savedLayout = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+        if (savedLayout) {
+            try {
+                const parsedLayout = JSON.parse(savedLayout);
+                this.setState({
+                    sheetCollapsed: !!parsedLayout.sheetCollapsed,
+                    sheetWidth: this.clampSheetWidth(parsedLayout.sheetWidth) || DEFAULT_SHEET_WIDTH,
+                    chatWidth: this.clampChatWidth(parsedLayout.chatWidth) || DEFAULT_CHAT_WIDTH,
+                    mobileViewMode: parsedLayout.mobileViewMode === 'all' ? 'all' : 'tabs',
+                    mobileSheetHeight: this.clampMobileSheetHeight(parsedLayout.mobileSheetHeight) || DEFAULT_MOBILE_SHEET_HEIGHT,
+                    mobileChatHeight: this.clampMobileChatHeight(parsedLayout.mobileChatHeight) || DEFAULT_MOBILE_CHAT_HEIGHT
+                });
+            } catch (e) {
+                console.error("레이아웃 설정 복원 중 오류 발생:", e);
+            }
+        }
 
         const savedSession = window.localStorage.getItem(SESSION_STORAGE_KEY);
         if (savedSession) {
@@ -113,6 +185,223 @@ class CharacterSheetManager extends Component {
 
     componentWillUnmount() {
         if (this.rollTimer) clearInterval(this.rollTimer);
+        this.stopChatResize();
+        this.stopSheetResize();
+        this.stopMobileSheetResize();
+        this.stopMobileChatResize();
+        if (this.mobileMql) {
+            if (this.mobileMql.removeEventListener) {
+                this.mobileMql.removeEventListener('change', this.handleMobileMqChange);
+            } else if (this.mobileMql.removeListener) {
+                this.mobileMql.removeListener(this.handleMobileMqChange);
+            }
+        }
+        if (this.visualViewport) {
+            this.visualViewport.removeEventListener('resize', this.handleVisualViewportChange);
+            this.visualViewport.removeEventListener('scroll', this.handleVisualViewportChange);
+        }
+    }
+
+    handleMobileMqChange = (e) => {
+        this.setState({ isMobile : e.matches });
+    }
+
+    clampChatWidth = (value) => {
+        const n = Number(value);
+        if (!n || Number.isNaN(n)) return DEFAULT_CHAT_WIDTH;
+        return Math.min(MAX_CHAT_WIDTH, Math.max(MIN_CHAT_WIDTH, Math.round(n)));
+    }
+
+    clampSheetWidth = (value) => {
+        const n = Number(value);
+        if (!n || Number.isNaN(n)) return DEFAULT_SHEET_WIDTH;
+        return Math.min(MAX_SHEET_WIDTH, Math.max(MIN_SHEET_WIDTH, Math.round(n)));
+    }
+
+    // 📱 'all' 모드 세로 스택 높이 제한: 지도(메인)가 최소 높이 밑으로 밀리지 않도록,
+    // 실제 컨테이너 높이를 측정해서 시트/채팅이 서로+지도 몫까지 먹지 않게 상한을 계산한다.
+    clampMobileSheetHeight = (value) => {
+        const n = Number(value);
+        if (!n || Number.isNaN(n)) return DEFAULT_MOBILE_SHEET_HEIGHT;
+        const containerH = this.mobileStackRef.current?.clientHeight || 0;
+        const chatH = this.state.mobileChatHeight || DEFAULT_MOBILE_CHAT_HEIGHT;
+        const maxAllowed = containerH > 0
+            ? Math.max(MIN_MOBILE_SHEET_HEIGHT, containerH - MIN_MOBILE_MAP_HEIGHT - chatH - MOBILE_RESIZER_SIZE * 2)
+            : 480;
+        return Math.min(maxAllowed, Math.max(MIN_MOBILE_SHEET_HEIGHT, Math.round(n)));
+    }
+
+    clampMobileChatHeight = (value) => {
+        const n = Number(value);
+        if (!n || Number.isNaN(n)) return DEFAULT_MOBILE_CHAT_HEIGHT;
+        const containerH = this.mobileStackRef.current?.clientHeight || 0;
+        const sheetH = this.state.sheetCollapsed
+            ? MOBILE_COLLAPSED_SHEET_BAR
+            : (this.state.mobileSheetHeight || DEFAULT_MOBILE_SHEET_HEIGHT);
+        const maxAllowed = containerH > 0
+            ? Math.max(MIN_MOBILE_CHAT_HEIGHT, containerH - MIN_MOBILE_MAP_HEIGHT - sheetH - MOBILE_RESIZER_SIZE * 2)
+            : 480;
+        return Math.min(maxAllowed, Math.max(MIN_MOBILE_CHAT_HEIGHT, Math.round(n)));
+    }
+
+    saveLayoutPrefs = () => {
+        try {
+            window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({
+                sheetCollapsed: this.state.sheetCollapsed,
+                sheetWidth: this.state.sheetWidth,
+                chatWidth: this.state.chatWidth,
+                mobileViewMode: this.state.mobileViewMode,
+                mobileSheetHeight: this.state.mobileSheetHeight,
+                mobileChatHeight: this.state.mobileChatHeight
+            }));
+        } catch (e) {
+            console.error("레이아웃 설정 저장 중 오류 발생:", e);
+        }
+    }
+
+    // 🖱️ 캐릭터 시트 ↔ 지도 사이 리사이저: 펼쳐진 시트 폭을 드래그로 조절 (시트가 좌측이라 오른쪽으로 끌수록 넓어짐)
+    startSheetResize = (e) => {
+        e.preventDefault();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        this._sheetResizeStartX = clientX;
+        this._sheetResizeStartWidth = this.state.sheetWidth;
+        this.setState({ isResizingSheet: true });
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', this.handleSheetResizeMove);
+        window.addEventListener('mouseup', this.stopSheetResize);
+        window.addEventListener('touchmove', this.handleSheetResizeMove, { passive: false });
+        window.addEventListener('touchend', this.stopSheetResize);
+    }
+
+    handleSheetResizeMove = (e) => {
+        if (this._sheetResizeStartX === undefined) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const delta = clientX - this._sheetResizeStartX;
+        this.setState({ sheetWidth: this.clampSheetWidth(this._sheetResizeStartWidth + delta) });
+        if (e.cancelable) e.preventDefault();
+    }
+
+    stopSheetResize = () => {
+        if (this._sheetResizeStartX === undefined) return;
+        this._sheetResizeStartX = undefined;
+        this.setState({ isResizingSheet: false });
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', this.handleSheetResizeMove);
+        window.removeEventListener('mouseup', this.stopSheetResize);
+        window.removeEventListener('touchmove', this.handleSheetResizeMove);
+        window.removeEventListener('touchend', this.stopSheetResize);
+        this.saveLayoutPrefs();
+    }
+
+    // 🖱️ 지도 ↔ 채팅 사이 리사이저: 드래그하는 동안 chatWidth를 실시간으로 갱신
+    startChatResize = (e) => {
+        e.preventDefault();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        this._resizeStartX = clientX;
+        this._resizeStartWidth = this.state.chatWidth;
+        this.setState({ isResizingChat: true });
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', this.handleChatResizeMove);
+        window.addEventListener('mouseup', this.stopChatResize);
+        window.addEventListener('touchmove', this.handleChatResizeMove, { passive: false });
+        window.addEventListener('touchend', this.stopChatResize);
+    }
+
+    handleChatResizeMove = (e) => {
+        if (this._resizeStartX === undefined) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const delta = clientX - this._resizeStartX;
+        // 리사이저를 오른쪽(지도 쪽)으로 끌면 채팅이 좁아지고 지도가 넓어짐, 왼쪽으로 끌면 반대
+        this.setState({ chatWidth: this.clampChatWidth(this._resizeStartWidth - delta) });
+        if (e.cancelable) e.preventDefault();
+    }
+
+    stopChatResize = () => {
+        if (this._resizeStartX === undefined) return;
+        this._resizeStartX = undefined;
+        this.setState({ isResizingChat: false });
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', this.handleChatResizeMove);
+        window.removeEventListener('mouseup', this.stopChatResize);
+        window.removeEventListener('touchmove', this.handleChatResizeMove);
+        window.removeEventListener('touchend', this.stopChatResize);
+        this.saveLayoutPrefs();
+    }
+
+    // 📱 'all' 모드 세로 리사이저 - 시트(위) ↔ 지도: 시트가 위쪽이라 아래로 끌수록 넓어짐
+    startMobileSheetResize = (e) => {
+        e.preventDefault();
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        this._mobileSheetResizeStartY = clientY;
+        this._mobileSheetResizeStartHeight = this.state.mobileSheetHeight;
+        this.setState({ isResizingMobileSheet: true });
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', this.handleMobileSheetResizeMove);
+        window.addEventListener('mouseup', this.stopMobileSheetResize);
+        window.addEventListener('touchmove', this.handleMobileSheetResizeMove, { passive: false });
+        window.addEventListener('touchend', this.stopMobileSheetResize);
+    }
+
+    handleMobileSheetResizeMove = (e) => {
+        if (this._mobileSheetResizeStartY === undefined) return;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const delta = clientY - this._mobileSheetResizeStartY;
+        this.setState({ mobileSheetHeight: this.clampMobileSheetHeight(this._mobileSheetResizeStartHeight + delta) });
+        if (e.cancelable) e.preventDefault();
+    }
+
+    stopMobileSheetResize = () => {
+        if (this._mobileSheetResizeStartY === undefined) return;
+        this._mobileSheetResizeStartY = undefined;
+        this.setState({ isResizingMobileSheet: false });
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', this.handleMobileSheetResizeMove);
+        window.removeEventListener('mouseup', this.stopMobileSheetResize);
+        window.removeEventListener('touchmove', this.handleMobileSheetResizeMove);
+        window.removeEventListener('touchend', this.stopMobileSheetResize);
+        this.saveLayoutPrefs();
+    }
+
+    // 📱 'all' 모드 세로 리사이저 - 지도 ↔ 채팅(아래): 채팅이 아래쪽이라 위로 끌수록 넓어짐
+    startMobileChatResize = (e) => {
+        e.preventDefault();
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        this._mobileChatResizeStartY = clientY;
+        this._mobileChatResizeStartHeight = this.state.mobileChatHeight;
+        this.setState({ isResizingMobileChat: true });
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', this.handleMobileChatResizeMove);
+        window.addEventListener('mouseup', this.stopMobileChatResize);
+        window.addEventListener('touchmove', this.handleMobileChatResizeMove, { passive: false });
+        window.addEventListener('touchend', this.stopMobileChatResize);
+    }
+
+    handleMobileChatResizeMove = (e) => {
+        if (this._mobileChatResizeStartY === undefined) return;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const delta = clientY - this._mobileChatResizeStartY;
+        this.setState({ mobileChatHeight: this.clampMobileChatHeight(this._mobileChatResizeStartHeight - delta) });
+        if (e.cancelable) e.preventDefault();
+    }
+
+    stopMobileChatResize = () => {
+        if (this._mobileChatResizeStartY === undefined) return;
+        this._mobileChatResizeStartY = undefined;
+        this.setState({ isResizingMobileChat: false });
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', this.handleMobileChatResizeMove);
+        window.removeEventListener('mouseup', this.stopMobileChatResize);
+        window.removeEventListener('touchmove', this.handleMobileChatResizeMove);
+        window.removeEventListener('touchend', this.stopMobileChatResize);
+        this.saveLayoutPrefs();
     }
 
     saveSession = () => {
@@ -174,11 +463,17 @@ class CharacterSheetManager extends Component {
     };
 
     handler = {
-        changeTab : (tab) => {
+        changeSheetSubTab : (subTab) => {
+            this.setState({ sheetSubTab : subTab });
+        }
+      , toggleSheetCollapsed : () => {
+            this.setState(prev => ({ sheetCollapsed : !prev.sheetCollapsed }), this.saveLayoutPrefs);
+        }
+      , changeTab : (tab) => {
             this.setState({ activeTab : tab });
         }
-      , changeSheetSubTab : (subTab) => {
-            this.setState({ sheetSubTab : subTab });
+      , setMobileViewMode : (mode) => {
+            this.setState({ mobileViewMode : mode }, this.saveLayoutPrefs);
         }
       , toggleUploadActive : () => {
             this.setState(prev => ({ isUploadActive : !prev.isUploadActive }));
@@ -618,7 +913,7 @@ class CharacterSheetManager extends Component {
 
     buildGmSystemInstruction = () => {
         const c = this.state.charData;
-        const { mapUrl1, mapUrl2, scenarioData, sessionState, activeTab } = this.state;
+        const { mapUrl1, mapUrl2, scenarioData, sessionState } = this.state;
         if (!c) return '';
 
         const summary = {
@@ -687,7 +982,7 @@ class CharacterSheetManager extends Component {
             instructionParts.push(JSON.stringify(sessionState));
         }
 
-        if (activeTab === 'map' || this.state.mapState?.tokens?.length > 0) {
+        if (this.state.mapState?.tokens?.length > 0) {
             instructionParts.push('');
             instructionParts.push(`## ${this.getCompressedMapText()}`);
         }
@@ -807,12 +1102,16 @@ class CharacterSheetManager extends Component {
 
     render() {
         const {
-            activeTab, sheetSubTab, isUploadActive, rawInput, charData, themeKey, inspiration, usedFeatures, usedSpellSlots
+            sheetSubTab, isUploadActive, rawInput, charData, themeKey, inspiration, usedFeatures, usedSpellSlots
           , hitEffectKey, mapState
           , geminiApiKey, geminiModel, showGmSettings, gmMessages, gmInput, isGmLoading, gmAttachments
           , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
+          , sheetCollapsed, sheetWidth, isResizingSheet, chatWidth, isResizingChat, isMobile, activeTab
+          , mobileViewMode, mobileSheetHeight, isResizingMobileSheet, mobileChatHeight, isResizingMobileChat
+          , viewportHeight, viewportTop
         } = this.state;
         const themeVars = themeToCssVars(themeKey);
+        const hasWorkspace = !!charData;
 
         const subTabList = [
             { id: 'abilities', label: '🏋️ 능력치' },
@@ -823,271 +1122,557 @@ class CharacterSheetManager extends Component {
             { id: 'inventory', label: '🎒 소지품 & 결점' },
         ];
 
+        // 🔝 헤더 바 - 워크스페이스(지도 메인) 화면과 업로드 전 화면에서 공용으로 사용
+        const headerRow = (
+            <div className="flex items-center justify-between gap-2 shrink-0">
+                <button
+                    type="button"
+                    onClick={() => this.props.navigate('/')}
+                    className="flex items-center gap-1.5 text-xs font-semibold shrink-0"
+                    style={{ color : 'var(--text-muted)' }}
+                >
+                    <ArrowLeft size={14}/> 홈
+                </button>
+
+                <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+                    <div
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+                        style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
+                    >
+                        <BookOpenIcon size={14} className="text-white"/>
+                    </div>
+                    <span className="truncate text-sm font-bold" style={{ color : 'var(--text-main)' }}>
+                        {charData ? (charData.name || 'D&D 캐릭터 시트') : 'D&D 캐릭터 시트'}
+                    </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                    {/* 저장하기 버튼 */}
+                    <button
+                        type="button"
+                        onClick={this.handler.exportSessionState}
+                        className="px-3 py-1.5 text-xs font-semibold rounded-lg text-white hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
+                        style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
+                    >
+                        <DownloadIcon size={14}/>
+                        <span>저장하기</span>
+                    </button>
+
+                    {/* 초기화 버튼 */}
+                    <button
+                        type="button"
+                        onClick={this.handler.resetSession}
+                        className="px-3 py-1.5 text-xs font-semibold rounded-lg text-white transition-all flex items-center gap-1.5 shadow-sm bg-rose-600 hover:bg-rose-700 active:scale-95"
+                        title="세션 데이터 초기화 (API Key 제외)"
+                    >
+                        <RotateCcw size={14}/>
+                        <span>초기화</span>
+                    </button>
+
+                    {/* 업로드 버튼 */}
+                    <button
+                        type="button"
+                        onClick={this.handler.toggleUploadActive}
+                        className="px-3 py-1.5 text-xs font-semibold rounded-lg text-white hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
+                        style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
+                    >
+                        <UploadCloudIcon size={14}/>
+                        <span>업로드</span>
+                        {isUploadActive ? <ChevronUpIcon size={13}/> : <ChevronDownIcon size={13}/>}
+                    </button>
+                </div>
+            </div>
+        );
+
+        // 📜 캐릭터 시트 본문(헤더 카드 ~ 서브탭 콘텐츠) - 좌측 접이식 패널 안에서만 사용
+        const sheetBody = hasWorkspace && (
+            <>
+                <CharacterHeaderCard
+                    charData={charData}
+                    inspiration={inspiration}
+                    onToggleInspiration={this.handler.toggleInspiration}
+                />
+                <HpCard
+                    hp={charData.hp}
+                    onChangeHp={this.handler.changeHp}
+                    onTakeDamage={this.handler.takeDamagePrompt}
+                    onShortRest={this.handler.shortRest}
+                    onLongRest={this.handler.longRest}
+                />
+
+                <div className="flex flex-wrap gap-1.5 pb-2 my-1 border-b" style={{ borderColor : 'var(--border-color)' }}>
+                    {subTabList.map(tab => (
+                        <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => this.handler.changeSheetSubTab(tab.id)}
+                            className={`px-2.5 py-1.5 text-xs font-bold rounded-md transition-all border ${
+                                sheetSubTab === tab.id
+                                    ? 'bg-[var(--card-bg)] text-[var(--accent-color)] border-[var(--border-color)] shadow-sm'
+                                    : 'bg-transparent text-[var(--text-muted)] border-transparent hover:text-[var(--text-main)] hover:bg-[rgba(255,255,255,0.05)]'
+                            }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+
+                {sheetSubTab === 'abilities' && (
+                    <AbilitiesCard
+                        stats={charData.stats}
+                        proficiencyBonus={charData.proficiencyBonus}
+                        spellDC={charData.spellDC}
+                        spellAttackBonus={charData.spellAttackBonus}
+                        onRollCheck={this.handler.rollCheck}
+                    />
+                )}
+
+                {sheetSubTab === 'spells' && (
+                    <SpellsAndFeaturesCard
+                        specialFeatures={charData.specialFeatures}
+                        usedFeatures={usedFeatures}
+                        onToggleUsed={this.handler.toggleUsedFeature}
+                        spellSlots={charData.spellSlots}
+                        usedSpellSlots={usedSpellSlots}
+                        onToggleSpellSlot={this.handler.toggleSpellSlot}
+                        cantrips={charData.cantrips}
+                        preparedSpells={charData.preparedSpells}
+                        onRollSpell={this.handler.rollSpell}
+                    />
+                )}
+
+                {sheetSubTab === 'skills' && (
+                    <SkillsCard
+                        skills={charData.skills}
+                        onRollCheck={this.handler.rollCheck}
+                    />
+                )}
+
+                {sheetSubTab === 'equipment' && (
+                    <EquipmentCard
+                        equipmentSlots={charData.equipmentSlots}
+                        onRollDamage={this.handler.rollWeaponDamage}
+                        onShowInfo={this.handler.showEquipInfo}
+                    />
+                )}
+
+                {sheetSubTab === 'traits' && (
+                    <TraitsCard
+                        mode="traits"
+                        traits={charData.traits}
+                        languages={charData.languages}
+                    />
+                )}
+
+                {sheetSubTab === 'inventory' && (
+                    <InventoryCard
+                        mode="inventory"
+                        inventory={charData.inventory}
+                        flaw={charData.flaw}
+                    />
+                )}
+            </>
+        );
+
+        // 📤 업로드(다른 캐릭터 불러오기) 모달 - 데스크탑/모바일 워크스페이스 공용
+        const uploadModal = isUploadActive && (
+            <div
+                className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto p-4 bg-black/60 backdrop-blur-sm"
+                onClick={this.handler.toggleUploadActive}
+            >
+                <div className="relative w-full max-w-xl mt-10" onClick={(e) => e.stopPropagation()}>
+                    <button
+                        type="button"
+                        onClick={this.handler.toggleUploadActive}
+                        className="absolute -top-3 -right-3 flex h-7 w-7 items-center justify-center rounded-full text-white shadow-lg"
+                        style={{ backgroundColor : 'var(--accent-color)' }}
+                        title="닫기"
+                    >
+                        <XIcon size={14}/>
+                    </button>
+                    <SheetLoader
+                        rawInput={rawInput}
+                        onChangeRawInput={this.handler.changeRawInput}
+                        onRender={this.handler.renderFromInput}
+                        onFileUpload={this.handler.uploadFile}
+                        themeKey={themeKey}
+                        onChangeTheme={this.handler.changeTheme}
+                        onExport={this.handler.exportCharacter}
+                        canExport={!!charData}
+                    />
+                </div>
+            </div>
+        );
+
+        // ⌨️ 워크스페이스일 때만 visualViewport 기반 실제 높이/오프셋을 강제한다
+        // (모바일에서 키보드가 올라와도 fixed 컨테이너가 실제 보이는 영역만큼만 차지하도록)
+        const workspaceStyle = hasWorkspace
+            ? { ...themeVars, height : viewportHeight ? `${viewportHeight}px` : undefined, top : viewportTop || 0 }
+            : themeVars;
+
         return (
             <div
                 key={`hit-${hitEffectKey}`}
-                className={`p-3 bg-[var(--bg-color)] ${hitEffectKey > 0 ? 'cs-hit-effect' : ''}`}
-                style={themeVars}
+                className={`bg-[var(--bg-color)] ${hitEffectKey > 0 ? 'cs-hit-effect' : ''} ${hasWorkspace ? 'fixed inset-0 z-[55] overflow-hidden flex flex-col p-2.5 gap-2.5' : 'p-3'}`}
+                style={workspaceStyle}
             >
-                <div className="max-w-[650px] mx-auto flex flex-col gap-3">
-                    <div className="flex items-center justify-between gap-2">
-                        <button
-                            type="button"
-                            onClick={() => this.props.navigate('/')}
-                            className="flex items-center gap-1.5 text-xs font-semibold shrink-0"
-                            style={{ color : 'var(--text-muted)' }}
-                        >
-                            <ArrowLeft size={14}/> 홈
-                        </button>
+                {hasWorkspace && isMobile ? (
+                    <>
+                        {headerRow}
 
-                        <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
-                            <div
-                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
-                                style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
-                            >
-                                <BookOpenIcon size={14} className="text-white"/>
-                            </div>
-                            <span className="truncate text-sm font-bold" style={{ color : 'var(--text-main)' }}>
-                                {charData ? (charData.name || 'D&D 캐릭터 시트') : 'D&D 캐릭터 시트'}
-                            </span>
+                        {/* 📱 모바일 보기 모드 전환: 탭으로 하나씩 보기 ↔ 지도가 메인인 상하 배치로 전부 보기 */}
+                        <div className="flex gap-1 rounded-xl p-1 shrink-0" style={{ backgroundColor : 'var(--tag-bg)' }}>
+                            {[
+                                { id : 'tabs', icon : '🗂️', label : '탭으로 전환' }
+                              , { id : 'all', icon : '🧩', label : '한 화면에 전부' }
+                            ].map(mode => (
+                                <button
+                                    key={mode.id}
+                                    type="button"
+                                    onClick={() => this.handler.setMobileViewMode(mode.id)}
+                                    className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                                        mobileViewMode === mode.id
+                                            ? 'bg-[var(--card-bg)] text-[var(--accent-color)] shadow-sm'
+                                            : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                                    }`}
+                                >
+                                    <span>{mode.icon}</span>
+                                    <span>{mode.label}</span>
+                                </button>
+                            ))}
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
-                            {/* 저장하기 버튼 */}
-                            <button
-                                type="button"
-                                onClick={this.handler.exportSessionState}
-                                className="px-3 py-1.5 text-xs font-semibold rounded-lg text-white hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
-                                style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
-                            >
-                                <DownloadIcon size={14}/>
-                                <span>저장하기</span>
-                            </button>
-
-                            {/* 초기화 버튼 */}
-                            <button
-                                type="button"
-                                onClick={this.handler.resetSession}
-                                className="px-3 py-1.5 text-xs font-semibold rounded-lg text-white transition-all flex items-center gap-1.5 shadow-sm bg-rose-600 hover:bg-rose-700 active:scale-95"
-                                title="세션 데이터 초기화 (API Key 제외)"
-                            >
-                                <RotateCcw size={14}/>
-                                <span>초기화</span>
-                            </button>
-
-                            {/* 업로드 버튼 */}
-                            <button
-                                type="button"
-                                onClick={this.handler.toggleUploadActive}
-                                className="px-3 py-1.5 text-xs font-semibold rounded-lg text-white hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
-                                style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
-                            >
-                                <UploadCloudIcon size={14}/>
-                                <span>업로드</span>
-                                {isUploadActive ? <ChevronUpIcon size={13}/> : <ChevronDownIcon size={13}/>}
-                            </button>
-                        </div>
-                    </div>
-
-                    {isUploadActive && (
-                        <SheetLoader
-                            rawInput={rawInput}
-                            onChangeRawInput={this.handler.changeRawInput}
-                            onRender={this.handler.renderFromInput}
-                            onFileUpload={this.handler.uploadFile}
-                            themeKey={themeKey}
-                            onChangeTheme={this.handler.changeTheme}
-                            onExport={this.handler.exportCharacter}
-                            canExport={!!charData}
-                        />
-                    )}
-
-                    {!charData && !isUploadActive && (
-                        <div
-                            className="flex flex-col items-center gap-4 rounded-2xl border border-dashed px-6 py-16 text-center"
-                            style={{ borderColor : 'var(--border-color)' }}
-                        >
-                            <div
-                                className="flex h-16 w-16 items-center justify-center rounded-2xl shadow-lg"
-                                style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
-                            >
-                                <BookOpenIcon size={28} className="text-white"/>
-                            </div>
-                            <div>
-                                <h2 className="text-base font-bold" style={{ color : 'var(--text-main)' }}>캐릭터 시트를 불러와 주세요</h2>
-                                <p className="mt-1.5 max-w-xs text-sm leading-relaxed" style={{ color : 'var(--text-muted)' }}>
-                                    JSON/TXT 파일을 업로드하면 시트, 주사위, AI 게임 마스터 대화가 모두 활성화돼요.
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={this.handler.toggleUploadActive}
-                                className="flex items-center gap-1.5 rounded-full px-5 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
-                                style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
-                            >
-                                <UploadCloudIcon size={16}/> 지금 불러오기
-                            </button>
-                        </div>
-                    )}
-
-                    {charData && (
+                        {mobileViewMode === 'tabs' && (
                         <>
-                            {/* 📌 메인 탭 */}
-                            <div className="flex gap-1 rounded-xl p-1 mb-1" style={{ backgroundColor : 'var(--tag-bg)' }}>
-                                {[
-                                    { id : 'chat', icon : '🎲', label : 'GM 과의 대화' }
-                                  , { id : 'sheet', icon : '📜', label : '캐릭터 시트' }
-                                  , { id : 'map', icon : '🗺️', label : '전투 지도' }
-                                ].map(tab => (
-                                    <button
-                                        key={tab.id}
-                                        type="button"
-                                        onClick={() => this.handler.changeTab(tab.id)}
-                                        className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                                            activeTab === tab.id
-                                                ? 'bg-[var(--card-bg)] text-[var(--accent-color)] shadow-sm'
-                                                : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
-                                        }`}
+                        {/* 🗂️ 탭 모드: 화면이 좁아 3분할이 어려우므로 기존처럼 탭으로 GM 대화 / 시트 / 지도를 전환.
+                            탭 밖(페이지)은 스크롤되지 않고, 선택된 패널 하나만 남은 높이를 꽉 채워 그 안에서 스크롤된다. */}
+                        <div className="flex gap-1 rounded-xl p-1 shrink-0" style={{ backgroundColor : 'var(--tag-bg)' }}>
+                            {[
+                                { id : 'chat', icon : '🎲', label : 'GM 대화' }
+                              , { id : 'sheet', icon : '📜', label : '캐릭터 시트' }
+                              , { id : 'map', icon : '🗺️', label : '전투 지도' }
+                            ].map(tab => (
+                                <button
+                                    key={tab.id}
+                                    type="button"
+                                    onClick={() => this.handler.changeTab(tab.id)}
+                                    className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                                        activeTab === tab.id
+                                            ? 'bg-[var(--card-bg)] text-[var(--accent-color)] shadow-sm'
+                                            : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                                    }`}
+                                >
+                                    <span>{tab.icon}</span>
+                                    <span>{tab.label}</span>
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="flex-1 min-h-0">
+                            {activeTab === 'chat' && (
+                                <div className="h-full min-h-0">
+                                    <GmChatPanel
+                                        apiKey={geminiApiKey}
+                                        model={geminiModel}
+                                        onChangeApiKey={this.handler.changeGeminiApiKey}
+                                        onChangeModel={this.handler.changeGeminiModel}
+                                        showSettings={showGmSettings}
+                                        onToggleSettings={this.handler.toggleGmSettings}
+                                        onExportLogs={this.handler.exportChatLogs}
+                                        messages={gmMessages}
+                                        inputValue={gmInput}
+                                        onChangeInput={this.handler.changeGmInput}
+                                        onSend={this.sendGmMessage}
+                                        isLoading={isGmLoading}
+                                        attachedFiles={gmAttachments}
+                                        onAttachFile={this.handler.attachGmFile}
+                                        onRemoveAttachment={this.handler.removeGmAttachment}
+
+                                        scenarioUrl={scenarioUrl}
+                                        mapUrl1={mapUrl1}
+                                        mapUrl2={mapUrl2}
+                                        isFetchLoading={isFetchLoading}
+                                        scenarioData={scenarioData}
+                                        onChangeScenarioUrl={this.handler.changeScenarioUrl}
+                                        onChangeMapUrl1={this.handler.changeMapUrl1}
+                                        onChangeMapUrl2={this.handler.changeMapUrl2}
+                                        onLoadScenario={this.handler.handleLoadScenario}
+                                    />
+                                </div>
+                            )}
+
+                            {activeTab === 'sheet' && (
+                                <div className="cs-scroll h-full min-h-0 overflow-y-auto rounded-xl border bg-[var(--card-bg)] backdrop-blur-md p-2.5 flex flex-col gap-3" style={{ borderColor : 'var(--border-color)' }}>
+                                    {sheetBody}
+                                </div>
+                            )}
+
+                            {activeTab === 'map' && (
+                                <div className="h-full min-h-0">
+                                    <BattleMapPanel
+                                        mapState={mapState}
+                                        isMobile={isMobile}
+                                        onUpdateMapState={(newMapState) => {
+                                            this.setState({ mapState : newMapState }, this.saveSession);
+                                        }}
+                                    />
+                                </div>
+                            )}
+                        </div>
+                        </>
+                        )}
+
+                        {mobileViewMode === 'all' && (
+                            // 🧩 한 화면 모드: 지도가 메인, 웹처럼 좌우가 아니라 상하로 쌓는다
+                            // (시트 접기/펼치기, 시트↔지도, 지도↔채팅 사이 모두 세로 리사이저)
+                            // 채팅을 맨 아래 두되, 컨테이너 높이 자체를 visualViewport에 맞춰 갱신하므로
+                            // 모바일 키보드가 올라와도 입력창이 키보드 위에 그대로 남는다
+                            <div ref={this.mobileStackRef} className="flex-1 min-h-0 flex flex-col">
+                                {/* 📜 캐릭터 시트 - 접기/펼치기 */}
+                                <div
+                                    className={`shrink-0 ${isResizingMobileSheet ? '' : 'transition-[height] duration-200 ease-out'} ${sheetCollapsed ? 'h-11' : ''}`}
+                                    style={sheetCollapsed ? undefined : { height : mobileSheetHeight, minHeight : MIN_MOBILE_SHEET_HEIGHT }}
+                                >
+                                    <div
+                                        className="h-full min-h-0 flex flex-col rounded-xl border bg-[var(--card-bg)] backdrop-blur-md overflow-hidden"
+                                        style={{ borderColor : 'var(--border-color)' }}
                                     >
-                                        <span>{tab.icon}</span>
-                                        <span>{tab.label}</span>
+                                        <button
+                                            type="button"
+                                            onClick={this.handler.toggleSheetCollapsed}
+                                            className="shrink-0 flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold border-b hover:opacity-80 transition-opacity"
+                                            style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}
+                                            title={sheetCollapsed ? '캐릭터 시트 펼치기' : '캐릭터 시트 접기'}
+                                        >
+                                            {sheetCollapsed ? <ChevronDownIcon size={15}/> : <ChevronUpIcon size={15}/>}
+                                            <span>📜 캐릭터 시트</span>
+                                        </button>
+
+                                        {!sheetCollapsed && (
+                                            <div className="cs-scroll flex-1 min-h-0 overflow-y-auto p-2.5 flex flex-col gap-3">
+                                                {sheetBody}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* ↕️ 시트/지도 리사이저 - 시트를 펼쳤을 때만 드래그로 동작, 접혔을 땐 여백 역할만 */}
+                                <div
+                                    className={`shrink-0 h-5 w-full flex items-center justify-center ${sheetCollapsed ? '' : `cs-resizer-v cursor-row-resize ${isResizingMobileSheet ? 'is-active' : ''}`}`}
+                                    onMouseDown={sheetCollapsed ? undefined : this.startMobileSheetResize}
+                                    onTouchStart={sheetCollapsed ? undefined : this.startMobileSheetResize}
+                                    title={sheetCollapsed ? undefined : '드래그해서 캐릭터 시트/지도 높이를 조절하세요'}
+                                >
+                                    {!sheetCollapsed && <div className="cs-resizer-bar-v"/>}
+                                </div>
+
+                                {/* 🗺️ 전투 지도 - 메인, 남는 공간을 전부 차지 */}
+                                <div className="flex-1 min-h-[160px]">
+                                    <BattleMapPanel
+                                        mapState={mapState}
+                                        isMobile={isMobile}
+                                        onUpdateMapState={(newMapState) => {
+                                            this.setState({ mapState : newMapState }, this.saveSession);
+                                        }}
+                                    />
+                                </div>
+
+                                {/* ↕️ 지도/채팅 리사이저 */}
+                                <div
+                                    className={`cs-resizer-v shrink-0 h-5 w-full flex items-center justify-center cursor-row-resize ${isResizingMobileChat ? 'is-active' : ''}`}
+                                    onMouseDown={this.startMobileChatResize}
+                                    onTouchStart={this.startMobileChatResize}
+                                    title="드래그해서 지도/채팅 높이를 조절하세요"
+                                >
+                                    <div className="cs-resizer-bar-v"/>
+                                </div>
+
+                                {/* 💬 GM 채팅 - 맨 아래 고정(채팅방 스타일), 키보드 위로 자연스럽게 붙는다 */}
+                                <div className="shrink-0" style={{ height : mobileChatHeight, minHeight : MIN_MOBILE_CHAT_HEIGHT }}>
+                                    <GmChatPanel
+                                        apiKey={geminiApiKey}
+                                        model={geminiModel}
+                                        onChangeApiKey={this.handler.changeGeminiApiKey}
+                                        onChangeModel={this.handler.changeGeminiModel}
+                                        showSettings={showGmSettings}
+                                        onToggleSettings={this.handler.toggleGmSettings}
+                                        onExportLogs={this.handler.exportChatLogs}
+                                        messages={gmMessages}
+                                        inputValue={gmInput}
+                                        onChangeInput={this.handler.changeGmInput}
+                                        onSend={this.sendGmMessage}
+                                        isLoading={isGmLoading}
+                                        attachedFiles={gmAttachments}
+                                        onAttachFile={this.handler.attachGmFile}
+                                        onRemoveAttachment={this.handler.removeGmAttachment}
+
+                                        scenarioUrl={scenarioUrl}
+                                        mapUrl1={mapUrl1}
+                                        mapUrl2={mapUrl2}
+                                        isFetchLoading={isFetchLoading}
+                                        scenarioData={scenarioData}
+                                        onChangeScenarioUrl={this.handler.changeScenarioUrl}
+                                        onChangeMapUrl1={this.handler.changeMapUrl1}
+                                        onChangeMapUrl2={this.handler.changeMapUrl2}
+                                        onLoadScenario={this.handler.handleLoadScenario}
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        {uploadModal}
+                    </>
+                ) : hasWorkspace ? (
+                    <>
+                        {headerRow}
+
+                        {/* 🖥️ 데스크탑: 지도가 메인인 GM 작업 화면 - 좌측 접이식 캐릭터 시트 + 중앙(최대) 전투 지도 + 우측 채팅방
+                            지도↔채팅 사이 리사이저로 폭을 서로 밀고 당길 수 있고, 페이지 자체는 절대 스크롤되지 않는다
+                            (fixed inset-0 + overflow-hidden, 각 패널만 내부에서 개별 스크롤) */}
+                        <div className="flex-1 min-h-0 flex overflow-x-auto">
+                            {/* 📜 캐릭터 시트 - 접기/펼치기 */}
+                            <div
+                                className={`h-full min-h-0 shrink-0 ${isResizingSheet ? '' : 'transition-[width] duration-200 ease-out'} ${sheetCollapsed ? 'w-11' : ''}`}
+                                style={sheetCollapsed ? undefined : { width : sheetWidth, minWidth : MIN_SHEET_WIDTH }}
+                            >
+                                <div
+                                    className="h-full min-h-0 flex flex-col rounded-xl border bg-[var(--card-bg)] backdrop-blur-md overflow-hidden"
+                                    style={{ borderColor : 'var(--border-color)' }}
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={this.handler.toggleSheetCollapsed}
+                                        className="shrink-0 flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold border-b hover:opacity-80 transition-opacity"
+                                        style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}
+                                        title={sheetCollapsed ? '캐릭터 시트 펼치기' : '캐릭터 시트 접기'}
+                                    >
+                                        {sheetCollapsed ? <ChevronRightIcon size={15}/> : <ChevronLeftIcon size={15}/>}
+                                        {!sheetCollapsed && <span>📜 캐릭터 시트</span>}
                                     </button>
-                                ))}
+
+                                    {!sheetCollapsed && (
+                                        <div className="cs-scroll flex-1 min-h-0 overflow-y-auto p-2.5 flex flex-col gap-3">
+                                            {sheetBody}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
-                            {/* 💬 1. GM 과의 대화 탭 */}
-                            {activeTab === 'chat' && (
-                                <GmChatPanel
-                                    apiKey={geminiApiKey}
-                                    model={geminiModel}
-                                    onChangeApiKey={this.handler.changeGeminiApiKey}
-                                    onChangeModel={this.handler.changeGeminiModel}
-                                    showSettings={showGmSettings}
-                                    onToggleSettings={this.handler.toggleGmSettings}
-                                    onExportLogs={this.handler.exportChatLogs}
-                                    messages={gmMessages}
-                                    inputValue={gmInput}
-                                    onChangeInput={this.handler.changeGmInput}
-                                    onSend={this.sendGmMessage}
-                                    isLoading={isGmLoading}
-                                    attachedFiles={gmAttachments}
-                                    onAttachFile={this.handler.attachGmFile}
-                                    onRemoveAttachment={this.handler.removeGmAttachment}
+                            {/* ↔️ 시트/지도 크기 조절 리사이저 - 시트를 펼쳤을 때만 드래그로 동작, 접혔을 땐 여백 역할만 */}
+                            <div
+                                className={`shrink-0 w-3 h-full flex items-center justify-center ${sheetCollapsed ? '' : `cs-resizer cursor-col-resize ${isResizingSheet ? 'is-active' : ''}`}`}
+                                onMouseDown={sheetCollapsed ? undefined : this.startSheetResize}
+                                onTouchStart={sheetCollapsed ? undefined : this.startSheetResize}
+                                title={sheetCollapsed ? undefined : '드래그해서 캐릭터 시트/지도 크기를 조절하세요'}
+                            >
+                                {!sheetCollapsed && <div className="cs-resizer-bar"/>}
+                            </div>
 
-                                    scenarioUrl={scenarioUrl}
-                                    mapUrl1={mapUrl1}
-                                    mapUrl2={mapUrl2}
-                                    isFetchLoading={isFetchLoading}
-                                    scenarioData={scenarioData}
-                                    onChangeScenarioUrl={this.handler.changeScenarioUrl}
-                                    onChangeMapUrl1={this.handler.changeMapUrl1}
-                                    onChangeMapUrl2={this.handler.changeMapUrl2}
-                                    onLoadScenario={this.handler.handleLoadScenario}
-                                />
-                            )}
-
-                            {/* 📜 2. 캐릭터 시트 탭 */}
-                            {activeTab === 'sheet' && (
-                                <>
-                                    <CharacterHeaderCard
-                                        charData={charData}
-                                        inspiration={inspiration}
-                                        onToggleInspiration={this.handler.toggleInspiration}
+                            {/* 🗺️ 전투 지도(메인, 최대한 넓게) + 💬 GM 채팅(우측, 채팅방 스타일) */}
+                            <div className="flex-1 min-w-[420px] h-full min-h-0 flex">
+                                <div className="flex-1 min-w-[280px] h-full min-h-0">
+                                    <BattleMapPanel
+                                        mapState={mapState}
+                                        isMobile={isMobile}
+                                        onUpdateMapState={(newMapState) => {
+                                            this.setState({ mapState : newMapState }, this.saveSession);
+                                        }}
                                     />
-                                    <HpCard
-                                        hp={charData.hp}
-                                        onChangeHp={this.handler.changeHp}
-                                        onTakeDamage={this.handler.takeDamagePrompt}
-                                        onShortRest={this.handler.shortRest}
-                                        onLongRest={this.handler.longRest}
+                                </div>
+
+                                {/* ↔️ 지도/채팅 크기 조절 리사이저 */}
+                                <div
+                                    className={`cs-resizer shrink-0 w-3 h-full flex items-center justify-center cursor-col-resize ${isResizingChat ? 'is-active' : ''}`}
+                                    onMouseDown={this.startChatResize}
+                                    onTouchStart={this.startChatResize}
+                                    title="드래그해서 지도/채팅 크기를 조절하세요"
+                                >
+                                    <div className="cs-resizer-bar"/>
+                                </div>
+
+                                <div
+                                    className="shrink-0 h-full min-h-0"
+                                    style={{ width : chatWidth, minWidth : MIN_CHAT_WIDTH }}
+                                >
+                                    <GmChatPanel
+                                        apiKey={geminiApiKey}
+                                        model={geminiModel}
+                                        onChangeApiKey={this.handler.changeGeminiApiKey}
+                                        onChangeModel={this.handler.changeGeminiModel}
+                                        showSettings={showGmSettings}
+                                        onToggleSettings={this.handler.toggleGmSettings}
+                                        onExportLogs={this.handler.exportChatLogs}
+                                        messages={gmMessages}
+                                        inputValue={gmInput}
+                                        onChangeInput={this.handler.changeGmInput}
+                                        onSend={this.sendGmMessage}
+                                        isLoading={isGmLoading}
+                                        attachedFiles={gmAttachments}
+                                        onAttachFile={this.handler.attachGmFile}
+                                        onRemoveAttachment={this.handler.removeGmAttachment}
+
+                                        scenarioUrl={scenarioUrl}
+                                        mapUrl1={mapUrl1}
+                                        mapUrl2={mapUrl2}
+                                        isFetchLoading={isFetchLoading}
+                                        scenarioData={scenarioData}
+                                        onChangeScenarioUrl={this.handler.changeScenarioUrl}
+                                        onChangeMapUrl1={this.handler.changeMapUrl1}
+                                        onChangeMapUrl2={this.handler.changeMapUrl2}
+                                        onLoadScenario={this.handler.handleLoadScenario}
                                     />
+                                </div>
+                            </div>
+                        </div>
 
-                                    <div className="flex flex-wrap gap-1.5 pb-2 my-1 border-b" style={{ borderColor : 'var(--border-color)' }}>
-                                        {subTabList.map(tab => (
-                                            <button
-                                                key={tab.id}
-                                                type="button"
-                                                onClick={() => this.handler.changeSheetSubTab(tab.id)}
-                                                className={`px-2.5 py-1.5 text-xs font-bold rounded-md transition-all border ${
-                                                    sheetSubTab === tab.id
-                                                        ? 'bg-[var(--card-bg)] text-[var(--accent-color)] border-[var(--border-color)] shadow-sm'
-                                                        : 'bg-transparent text-[var(--text-muted)] border-transparent hover:text-[var(--text-main)] hover:bg-[rgba(255,255,255,0.05)]'
-                                                }`}
-                                            >
-                                                {tab.label}
-                                            </button>
-                                        ))}
-                                    </div>
+                        {uploadModal}
+                    </>
+                ) : (
+                    <div className="max-w-[650px] mx-auto flex flex-col gap-3">
+                        {headerRow}
 
-                                    {sheetSubTab === 'abilities' && (
-                                        <AbilitiesCard
-                                            stats={charData.stats}
-                                            proficiencyBonus={charData.proficiencyBonus}
-                                            spellDC={charData.spellDC}
-                                            spellAttackBonus={charData.spellAttackBonus}
-                                            onRollCheck={this.handler.rollCheck}
-                                        />
-                                    )}
+                        {isUploadActive && (
+                            <SheetLoader
+                                rawInput={rawInput}
+                                onChangeRawInput={this.handler.changeRawInput}
+                                onRender={this.handler.renderFromInput}
+                                onFileUpload={this.handler.uploadFile}
+                                themeKey={themeKey}
+                                onChangeTheme={this.handler.changeTheme}
+                                onExport={this.handler.exportCharacter}
+                                canExport={!!charData}
+                            />
+                        )}
 
-                                    {sheetSubTab === 'spells' && (
-                                        <SpellsAndFeaturesCard
-                                            specialFeatures={charData.specialFeatures}
-                                            usedFeatures={usedFeatures}
-                                            onToggleUsed={this.handler.toggleUsedFeature}
-                                            spellSlots={charData.spellSlots}
-                                            usedSpellSlots={usedSpellSlots}
-                                            onToggleSpellSlot={this.handler.toggleSpellSlot}
-                                            cantrips={charData.cantrips}
-                                            preparedSpells={charData.preparedSpells}
-                                            onRollSpell={this.handler.rollSpell}
-                                        />
-                                    )}
-
-                                    {sheetSubTab === 'skills' && (
-                                        <SkillsCard
-                                            skills={charData.skills}
-                                            onRollCheck={this.handler.rollCheck}
-                                        />
-                                    )}
-
-                                    {sheetSubTab === 'equipment' && (
-                                        <EquipmentCard
-                                            equipmentSlots={charData.equipmentSlots}
-                                            onRollDamage={this.handler.rollWeaponDamage}
-                                            onShowInfo={this.handler.showEquipInfo}
-                                        />
-                                    )}
-
-                                    {sheetSubTab === 'traits' && (
-                                        <TraitsCard
-                                            mode="traits"
-                                            traits={charData.traits}
-                                            languages={charData.languages}
-                                        />
-                                    )}
-
-                                    {sheetSubTab === 'inventory' && (
-                                        <InventoryCard
-                                            mode="inventory"
-                                            inventory={charData.inventory}
-                                            flaw={charData.flaw}
-                                        />
-                                    )}
-                                </>
-                            )}
-
-                            {/* 🗺️ 3. 전투 지도 (VTT) 메인 탭 */}
-                            {activeTab === 'map' && (
-                                <BattleMapPanel
-                                    mapState={mapState}
-                                    onUpdateMapState={(newMapState) => {
-                                        this.setState({ mapState : newMapState }, this.saveSession);
-                                    }}
-                                />
-                            )}
-                        </>
-                    )}
-                </div>
+                        {!isUploadActive && (
+                            <div
+                                className="flex flex-col items-center gap-4 rounded-2xl border border-dashed px-6 py-16 text-center"
+                                style={{ borderColor : 'var(--border-color)' }}
+                            >
+                                <div
+                                    className="flex h-16 w-16 items-center justify-center rounded-2xl shadow-lg"
+                                    style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
+                                >
+                                    <BookOpenIcon size={28} className="text-white"/>
+                                </div>
+                                <div>
+                                    <h2 className="text-base font-bold" style={{ color : 'var(--text-main)' }}>캐릭터 시트를 불러와 주세요</h2>
+                                    <p className="mt-1.5 max-w-xs text-sm leading-relaxed" style={{ color : 'var(--text-muted)' }}>
+                                        JSON/TXT 파일을 업로드하면 시트, 주사위, AI 게임 마스터 대화가 모두 활성화돼요.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={this.handler.toggleUploadActive}
+                                    className="flex items-center gap-1.5 rounded-full px-5 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
+                                    style={{ background : 'linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%)' }}
+                                >
+                                    <UploadCloudIcon size={16}/> 지금 불러오기
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         );
     }

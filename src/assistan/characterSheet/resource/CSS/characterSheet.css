@@ -13,6 +13,72 @@
     animation: cs-screen-damage 0.4s ease-in-out;
 }
 
+/* ===== 워크스페이스(지도 메인 레이아웃) 전용 커스텀 스크롤바 =====
+   좌측 캐릭터 시트 패널, 채팅 로그, GM 설정 패널 등 내부 스크롤 영역에 적용 */
+.cs-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent-color) transparent;
+}
+.cs-scroll::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+}
+.cs-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+.cs-scroll::-webkit-scrollbar-thumb {
+    background-color: var(--accent-color);
+    opacity: 0.5;
+    border-radius: 999px;
+}
+.cs-scroll::-webkit-scrollbar-thumb:hover {
+    background-color: var(--highlight);
+}
+
+/* 지도 ↔ 채팅 리사이저 핸들 */
+.cs-resizer {
+    position: relative;
+}
+.cs-resizer::before {
+    content: '';
+    position: absolute;
+    inset: 0 -6px;
+}
+.cs-resizer:hover .cs-resizer-bar,
+.cs-resizer.is-active .cs-resizer-bar {
+    background-color: var(--accent-color);
+    height: 48px;
+}
+.cs-resizer-bar {
+    width: 4px;
+    height: 28px;
+    border-radius: 999px;
+    background-color: var(--border-color);
+    transition: background-color 0.15s ease, height 0.15s ease;
+}
+
+/* 모바일 'all' 모드 - 시트/지도/채팅을 상하로 쌓을 때 쓰는 가로 방향 리사이저 (위 리사이저를 90도 돌린 버전) */
+.cs-resizer-v {
+    position: relative;
+}
+.cs-resizer-v::before {
+    content: '';
+    position: absolute;
+    inset: -8px 0;
+}
+.cs-resizer-v:hover .cs-resizer-bar-v,
+.cs-resizer-v.is-active .cs-resizer-bar-v {
+    background-color: var(--accent-color);
+    width: 56px;
+}
+.cs-resizer-bar-v {
+    height: 4px;
+    width: 32px;
+    border-radius: 999px;
+    background-color: var(--border-color);
+    transition: background-color 0.15s ease, width 0.15s ease;
+}
+
 /* @3d-dice/dice-box가 만드는 캔버스는 자체 크기(width/height)를 CSS로 지정해주지 않으면
    브라우저 기본 캔버스 크기(300x150)로 남아 있다가 결국 0x0으로 잡혀서 아무것도 안 보인다.
    컨테이너(#cs-dice-box-canvas-root, position:fixed inset-0)를 꽉 채우도록 명시한다. */
