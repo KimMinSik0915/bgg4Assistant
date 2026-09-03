@@ -20,10 +20,42 @@
  * 완전히 별도 청크로 쪼개고 실제로 처음 굴릴 때만 네트워크로 받아오게 한다.
  */
 
+// 🎨 사용자가 설정 화면에서 고른 주사위 색상(diceEffectSettings.getDiceColor)을 실제 물리
+// 주사위에도 그대로 입힌다. dice-box의 roll()/add()는 호출마다 themeColor 옵션을 새로 받을 수
+// 있어서(생성 시점의 config.themeColor는 그저 초기값일 뿐), 굴릴 때마다 최신 설정값을 다시 읽어
+// 넘기면 된다 - 이미 만들어진 DiceBox 인스턴스를 굳이 재생성할 필요가 없다. 실제로 여러 차례
+// 검증된 안전한 패턴이라 색은 이렇게 "언제든 바로" 바뀐다.
+//
+// ⚠️ theme(메시/텍스처 세트, 예: "rust")은 절대 이렇게 살아있는 인스턴스에 다시 넘기지 않는다.
+// 처음엔 "React key로 캔버스만 리마운트시켜서 다음 getDiceBox()가 새 DiceBox를 만들게 하면
+// 되겠지" 싶어서 그렇게 해봤는데, 실제로 테스트해보니 그 방법으로는 안 됐다 - 캔버스(DOM)는
+// 새로 생기지만, dice-box 내부의 Ammo.js(WASM 물리엔진)는 같은 페이지 안에서 두 번째 인스턴스가
+// 만들어지는 걸 제대로 지원하지 못해서, 물리 시뮬레이션이 응답하지 않아 주사위가 아예 안
+// 나타나는(새로고침을 해야만 복구되는) 버그로 이어졌다. dice-box에 dispose() API가 없어서 첫
+// 번째 인스턴스를 제대로 정리하고 시작할 방법도 없다.
+//
+// 그래서 theme은 "이 페이지가 로드될 때 딱 한 번" createBox에서 읽히고, 이후로는 절대 안
+// 바뀐다. 테마 설정을 바꾸면(SettingsScreen) 페이지 전체를 새로고침해서 - 정확히 사용자가
+// 수동으로 새로고침해서 고쳤던 것과 똑같은 방식으로 - 다음 로드에서 새 theme으로 첫(=유일한)
+// DiceBox를 만들게 한다.
+import { getDiceColor, getDiceTheme } from './diceEffectSettings';
+
 // 물리 주사위 캔버스가 실제로 붙는 자리. 화면 전체를 덮는 이 컨테이너는 이제 Layout에서 전역으로
 // 딱 한 번만 렌더링되므로(모든 화면에서 같은 캔버스를 공유), 셀렉터 문자열도 여기 한 곳에서만
 // 관리하고 DicePanel/CharacterSheetManager 양쪽에서 그대로 가져다 쓴다.
 export const DICE_BOX_SELECTOR = '#cs-dice-box-canvas-root';
+
+// 🚨 물리 엔진(getDiceBox/roll)이 무슨 이유로든 한 번 실패하면, 이 세션에서는 더 이상 3D를
+// 시도하지 않는다(같은 페이지 안에서 DiceBox를 다시 만들어봐야 위 주석대로 어차피 또 실패할
+// 뿐이라 - 매번 느린 재시도만 하고 결국 실패하는 것보단, 바로 일반 난수로 대체하는 게 낫다).
+// getDiceBox()가 이 플래그를 보고 즉시 reject하므로 rollPhysicalDie/rollPhysicalDiceGroup의
+// catch가 그대로 Math.random() 폴백으로 이어간다 - 3D가 실제로 복구되려면 새로고침이 필요하다.
+let physicsDisabled = false;
+const reportEngineFailure = (err) => {
+    physicsDisabled = true;
+    boxPromise = null;
+    console.error('[dice3DEngine] 3D 물리 엔진 실패 - 이 세션에서는 이후 굴림을 일반 난수로 대체합니다. 3D를 다시 쓰려면 새로고침하세요.', err);
+};
 
 // 🎲 주사위 굴림 "결과가 나왔다"는 사실을 화면 어디에 있든(다른 화면이어도) 전역 플로팅 위젯에
 // 알려주는 아주 작은 이벤트 버스. CharacterSheetManager처럼 DicePanel과 같은 트리에 있지 않은
@@ -113,8 +145,8 @@ const createBox = async (selector, attempt = 0) => {
     const box = new DiceBox({
         container : selector
       , assetPath : "/assets/dice-box/"
-      , theme : "default"
-      , themeColor : "#22d3ee"
+      , theme : getDiceTheme().id // 생성 시점에만 읽는다 - 살아있는 인스턴스에는 절대 다시 안 넘긴다
+      , themeColor : getDiceColor().accent
       , scale : 5.5
       , gravity : 2
       , throwForce : 6
@@ -142,6 +174,7 @@ const createBox = async (selector, attempt = 0) => {
 // 캔버스가 화면 어디에도 없어서 아무것도 안 보이는 상태가 된다. 그래서 매번 "지금 이 selector 안에
 // 진짜로 canvas가 붙어 있는지"를 확인하고, 없으면 캐시를 버리고 새로 만든다.
 export const getDiceBox = async (selector) => {
+    if (physicsDisabled) throw new Error('3D dice physics disabled for this session after a previous failure');
     if (boxPromise) {
         const stillAttached = document.querySelector(`${selector} canvas`);
         if (!stillAttached) boxPromise = null;
@@ -180,10 +213,12 @@ export const rollPhysicalDie = (selector, sides) => enqueuePhysicsCall(async () 
     try {
         const box = await getDiceBox(selector);
         box.clear();
-        const results = flattenResults(await box.roll(`1d${sides}`));
+        const results = flattenResults(
+            await box.roll(`1d${sides}`, { themeColor : getDiceColor().accent }),
+        );
         return typeof results[0]?.value === 'number' ? results[0].value : null;
     } catch (err) {
-        console.error('[dice3DEngine] 3D 주사위 굴림 실패, 일반 난수로 대체합니다.', err);
+        reportEngineFailure(err); // 일반 난수로 대체하는 건 호출부(rollDiePhysically 등) 몫 - 여기선 이후 세션 동안 3D를 끄기만 함
         return null;
     }
 });
@@ -197,10 +232,12 @@ export const rollPhysicalDiceGroup = (selector, specs) => enqueuePhysicsCall(asy
         const box = await getDiceBox(selector);
         box.clear();
         const notation = specs.map(({ sides, qty }) => ({ qty, sides }));
-        const results = flattenResults(await box.roll(notation));
+        const results = flattenResults(
+            await box.roll(notation, { themeColor : getDiceColor().accent }),
+        );
         return results.length > 0 ? results : null;
     } catch (err) {
-        console.error('[dice3DEngine] 다중 주사위 굴림 실패, 일반 난수로 대체합니다.', err);
+        reportEngineFailure(err); // 일반 난수로 대체하는 건 호출부(DicePanel.handleRollQueue) 몫 - 여기선 이후 세션 동안 3D를 끄기만 함
         return null;
     }
 });
