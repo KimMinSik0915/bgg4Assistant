@@ -6,7 +6,7 @@ import { buildExportJson, downloadJson, sanitizeFileName } from "../util/exportC
 import { THEME_KEYS, themeToCssVars } from "../resource/dataSet/themes";
 import { gmTools } from "../resource/dataSet/gmTools";
 import { callGemini, splitResponseParts, userContent } from "../service/geminiService";
-import { calculateGridPos, parseGridLabel } from "../util/gridCoords";
+import { calculateGridPos, parseGridLabel, gridIndexToPixel } from "../util/gridCoords";
 import SheetLoader from "../component/SheetLoader";
 import CharacterHeaderCard from "../component/CharacterHeaderCard";
 import HpCard from "../component/HpCard";
@@ -88,6 +88,19 @@ const GM_RESPONSE_SCHEMA = {
                   , to : { type : 'STRING' }
                 }
               , required : ['token', 'to']
+            }
+        }
+      , token_spawns : {
+            type : 'ARRAY'
+          , items : {
+                type : 'OBJECT'
+              , properties : {
+                    name : { type : 'STRING' }
+                  , at : { type : 'STRING' }
+                  , hp : { type : 'NUMBER' }
+                  , maxHp : { type : 'NUMBER' }
+                }
+              , required : ['name', 'at']
             }
         }
       , location_lookup : { type : 'STRING' }
@@ -589,6 +602,51 @@ class CharacterSheetManager extends Component {
 
         if (!changed) return;
 
+        this.setState(prev => ({
+            mapState : { ...prev.mapState, tokens : nextTokens, aiTokenUpdateAt : Date.now() }
+        }), this.saveSession);
+    };
+
+    // 👹 AI 응답의 token_spawns(예: [{ name:"고블린 2", at:"D3", hp:7, maxHp:7 }])를 받아 지도에
+    // 새 적/NPC 토큰을 생성한다. AI는 이미지를 만들 수 없으므로 이미지 없이(url 없이) 생성되고,
+    // 사용자가 지도에서 그 토큰을 클릭해 직접 이미지를 넣게 된다(BattleMapPanel 쪽 처리).
+    applyTokenSpawns = (spawns) => {
+        const { mapState } = this.state;
+        if (!mapState) return;
+        if (!Array.isArray(spawns) || spawns.length === 0) return;
+
+        const gridSize = Math.max(10, mapState.gridSize || 56);
+        const newTokens = [];
+
+        spawns.forEach(spawn => {
+            const name = String(spawn?.name || '').trim();
+            const atLabel = String(spawn?.at || spawn?.gridPos || spawn?.to || '').trim();
+            if (!name || !atLabel) return;
+
+            const parsedPos = parseGridLabel(atLabel);
+            if (!parsedPos) return;
+
+            const rawMaxHp = Number(spawn?.maxHp);
+            const maxHp = Number.isFinite(rawMaxHp) && rawMaxHp > 0 ? rawMaxHp : 30;
+            const rawHp = Number(spawn?.hp);
+            const hp = Number.isFinite(rawHp) ? Math.max(0, Math.min(maxHp, rawHp)) : maxHp;
+
+            const { x, y } = gridIndexToPixel(parsedPos.col, parsedPos.row, gridSize);
+
+            newTokens.push({
+                id : Date.now() + Math.random()
+              , name
+              , x, y
+              , gridPos : atLabel.toUpperCase()
+              , size : gridSize
+              , hp, maxHp
+                // url 없음 - 지도에서 이 토큰을 클릭하면 사용자가 이미지를 첨부할 수 있다
+            });
+        });
+
+        if (newTokens.length === 0) return;
+
+        const nextTokens = [...(mapState.tokens || []), ...newTokens];
         this.setState(prev => ({
             mapState : { ...prev.mapState, tokens : nextTokens, aiTokenUpdateAt : Date.now() }
         }), this.saveSession);
@@ -1161,6 +1219,7 @@ class CharacterSheetManager extends Component {
           , '    "landmarks": [{ "name": "동굴 입구 같은 장소/지형지물 이름", "gridPos": "그 장소의 격자 좌표(예: D5)" }]'
           , '  },'
           , '  "token_moves": [{ "token": "전투지도 토큰 이름(부분 일치 가능)", "to": "이동할 격자 좌표(예: C4) - 반드시 격자 좌표 형식" }],'
+          , '  "token_spawns": [{ "name": "새로 등장하는 적/NPC 이름", "at": "등장 격자 좌표(예: D3)", "hp": 7, "maxHp": 7 }],'
           , '  "location_lookup": "좌표를 모르는 장소 이름 (없으면 생략)"'
           , '}'
           , '```'
@@ -1169,6 +1228,8 @@ class CharacterSheetManager extends Component {
           , '- token_moves[].to는 항상 격자 좌표(예: C4)여야 하며 "동굴", "제단" 같은 장소 이름을 그대로 넣지 않는다. 장소 이름으로 이동 요청이 오면 아래 순서로 좌표를 찾는다: ① 지도 표식(핀) 목록 ② 아래 토큰 목록(장소 이름의 토큰이 있는 경우) ③ session_state.landmarks. 여기서 찾은 gridPos를 그대로 token_moves[].to에 사용한다.'
           , '- 위 ①~③ 어디에서도 좌표를 찾을 수 없는, 완전히 처음 언급되는 장소라면 **좌표를 추측하지 말고** 그 이동은 이번 턴에 보류한다(해당 token_moves는 만들지 않는다). 대신 최상위 응답에 "location_lookup"에 그 장소 이름을 그대로 채우고, narrative에는 "잠시 지도를 확인해보겠다" 같은 자연스러운 짧은 서술만 담는다 - 좌표는 시스템이 지도 이미지를 직접 보고 알려줄 것이다.'
           , '- session_state.landmarks: 지도 표식(핀)에 없던 장소의 좌표가 다른 경로(예: location_lookup 결과, 대화 중 사용자가 직접 알려줌)로 새로 확정되면 { name, gridPos }로 기록한다. landmarks는 매 응답마다 지금까지 확정된 항목을 전부 포함해 다시 보내라(clues/quests와 동일한 누적 방식). 한 번 정한 장소의 좌표는 이후에도 바꾸지 말고 일관되게 유지한다.'
+          , '- token_spawns: 서술상 새로운 적/몬스터/NPC가 전투지도 위에 처음 등장하면(매복, 문이 열리며 나타남, 증원 등) 채운다. 이미 아래 "전투지도 좌표" 목록에 있는 토큰은 다시 spawn하지 말고 token_moves로 이동시켜라. 이름은 기존 토큰과 겹치지 않게 구분한다(예: 고블린이 이미 있으면 "고블린 2"). hp/maxHp는 판단이 서면 채우고, 모르면 생략해도 된다(기본값 30으로 생성됨).'
+          , '- token_spawns로 생성된 토큰은 이미지 없이 지도에 나타나며, 사용자가 지도에서 직접 그 토큰을 눌러 이미지를 넣는다 - AI가 이미지를 만들거나 지정할 필요는 없다.'
           , ''
           , '## 3. 진행 방식 규칙 - 자유 서술 및 주사위 판정 수칙'
           , '- 매 턴 끝에 "1번, 2번" 같은 선택지를 나열하지 않는다.'
@@ -1323,6 +1384,10 @@ class CharacterSheetManager extends Component {
 
                         if (Array.isArray(parsed.token_moves) && parsed.token_moves.length > 0) {
                             this.applyTokenMoves(parsed.token_moves);
+                        }
+
+                        if (Array.isArray(parsed.token_spawns) && parsed.token_spawns.length > 0) {
+                            this.applyTokenSpawns(parsed.token_spawns);
                         }
 
                         if (typeof parsed.location_lookup === 'string' && parsed.location_lookup.trim()) {
