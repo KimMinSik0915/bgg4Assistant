@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { calculateGridPos } from '../util/gridCoords';
 
 /**
  * @Author : 김민식
  * BattleMapPanel : 스케일/줌 + 지도 위치 맞춤(Offset) + 격자 크기/색상 + 최신 좌표 동기화(tokensRef)
- * + 토큰 HP 직접 입력(Direct Set) 기능 포함
+ * + 토큰 HP 직접 입력(Direct Set) 기능 포함 + 장소 핀(랜드마크) 찍기 기능 포함
  */
 
 // 🎨 격자 고대비 색상 프리셋
@@ -14,7 +15,8 @@ const GRID_COLORS = {
     black: { name: '⚫ 검정', line: 'rgba(0, 0, 0, 0.85)',     shadow: 'rgba(255, 255, 255, 0.5)' }
 };
 
-// 💡 이미지 압축 헬퍼 함수
+// 💡 이미지 압축 헬퍼 함수 (압축 후 실제 픽셀 크기도 함께 반환 - AI 지도 비전 조회 시 %좌표를
+// 픽셀로 환산하는 데 필요하다)
 const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -35,7 +37,7 @@ const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
 
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                resolve(canvas.toDataURL('image/jpeg', quality));
+                resolve({ url : canvas.toDataURL('image/jpeg', quality), width, height });
             };
             img.src = e.target.result;
         };
@@ -67,6 +69,12 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
     const [isAlignMode, setIsAlignMode] = useState(false);
     const [mapOffset, setMapOffset] = useState({ x: 0, y: 0 });
 
+    // 📍 장소 핀(랜드마크) 찍기 모드 - 지도를 클릭하면 이미지가 아닌 "이름표"만 있는 표식을 놓는다.
+    // 이렇게 찍은 핀은 일반 토큰과 같은 배열(tokens)에 isPin:true로 저장되어, AI GM에게 매 턴
+    // 전달되는 좌표 목록에 함께 실린다 - AI가 지도 이미지를 못 봐도 "동굴 입구" 같은 이름을
+    // 정확한 격자 좌표로 알 수 있게 되는, 추가 비용 없는(순수 텍스트) 방법이다.
+    const [isPinMode, setIsPinMode] = useState(false);
+
     const dragRef = useRef({ startX: 0, startY: 0, tokenX: 0, tokenY: 0, isDragging: false });
     const panStartRef = useRef({ x: 0, y: 0 });
     const alignStartRef = useRef({ x: 0, y: 0 });
@@ -86,21 +94,6 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
     useEffect(() => { panOffsetRef.current = panOffset; }, [panOffset]);
     const zoomPersistTimerRef = useRef(null);
     const pinchRef = useRef({ active: false, lastDist: 0 });
-
-    // 🎯 동적 격자 크기 기준 AI 좌표 계산 (A1, B2 등)
-    const calculateGridPos = (x, y, currentGridSize = gridSize) => {
-        const cellSize = Math.max(10, currentGridSize);
-        const colIndex = Math.floor(Math.max(0, x) / cellSize);
-        const rowIndex = Math.floor(Math.max(0, y) / cellSize) + 1;
-
-        let colName = '';
-        let tempCol = colIndex;
-        while (tempCol >= 0) {
-            colName = String.fromCharCode(65 + (tempCol % 26)) + colName;
-            tempCol = Math.floor(tempCol / 26) - 1;
-        }
-        return `${colName}${rowIndex}`;
-    };
 
     // 💾 상위(sessionState) 전달 헬퍼
     const notifyParentState = (updated = {}) => {
@@ -142,6 +135,20 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
             if (mapState.mapOffset) setMapOffset(mapState.mapOffset);
         }
     }, []);
+
+    // 🤖 AI(GM 채팅)가 대화 결과에 따라 토큰을 이동시킨 경우, 상위(CharacterSheetManager)가
+    // mapState.aiTokenUpdateAt을 갱신해 새 좌표를 내려보낸다. 사용자가 직접 드래그할 때 발생하는
+    // 일반적인 notifyParentState 왕복에는 이 필드가 없으므로, 오직 AI가 옮겼을 때만 로컬 상태를
+    // 다시 동기화한다(그 외에는 이 컴포넌트가 tokens의 소유권을 그대로 갖는다).
+    const lastAiTokenUpdateRef = useRef(null);
+    useEffect(() => {
+        if (!mapState?.aiTokenUpdateAt || mapState.aiTokenUpdateAt === lastAiTokenUpdateRef.current) return;
+        lastAiTokenUpdateRef.current = mapState.aiTokenUpdateAt;
+        if (mapState.tokens) {
+            setTokens(mapState.tokens);
+            tokensRef.current = mapState.tokens;
+        }
+    }, [mapState?.aiTokenUpdateAt, mapState?.tokens]);
 
     const getPos = (e) => {
         if (e.touches && e.touches.length > 0) {
@@ -255,11 +262,13 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         if (files.length === 0) return;
 
         const readPromises = files.map(async (file) => {
-            const compressedUrl = await compressImage(file, 1200, 0.7);
+            const { url, width, height } = await compressImage(file, 1200, 0.7);
             return {
                 id: Date.now() + Math.random(),
                 name: file.name.replace(/\.[^/.]+$/, ""),
-                url: compressedUrl
+                url,
+                width,  // AI 지도 비전 조회 시 %좌표를 픽셀로 환산하는 데 사용
+                height
             };
         });
 
@@ -286,7 +295,7 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         const centerY = Math.max(0, (boardHeight / 2 - panOffset.y) / scaleFactor - gridSize / 2);
 
         const readPromises = files.map(async (file, idx) => {
-            const compressedUrl = await compressImage(file, 400, 0.8);
+            const { url : compressedUrl } = await compressImage(file, 400, 0.8);
             const posX = centerX + (idx * 12);
             const posY = centerY + (idx * 12);
 
@@ -330,6 +339,39 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         notifyParentState({ mapScale: 100, panOffset: { x: 0, y: 0 }, mapOffset: { x: 0, y: 0 } });
     };
 
+    // 📍 클릭한 화면 좌표를 콘텐츠 좌표(토큰/격자와 같은 좌표계)로 변환해 이름표만 있는 핀을 놓는다.
+    // 이미지 업로드 없이 즉시 생성되며, 이후 일반 토큰과 동일하게 드래그로 위치를 조정할 수 있다.
+    const placePinAt = (clientX, clientY) => {
+        if (!boardRef.current) return;
+        const rect = boardRef.current.getBoundingClientRect();
+        const scaleFactor = mapScale / 100;
+        const contentX = (clientX - rect.left - panOffset.x) / scaleFactor;
+        const contentY = (clientY - rect.top - panOffset.y) / scaleFactor;
+
+        const name = window.prompt('핀(장소 표식) 이름을 입력하세요. 예: 동굴 입구', '');
+        if (!name || !name.trim()) return;
+
+        const pinSize = Math.max(16, Math.round(gridSize * 0.6));
+        const posX = contentX - pinSize / 2;
+        const posY = contentY - pinSize / 2;
+
+        const newPin = {
+            id : Date.now() + Math.random()
+          , name : name.trim()
+          , isPin : true
+          , x : posX
+          , y : posY
+          , gridPos : calculateGridPos(posX, posY, gridSize)
+          , size : pinSize
+        };
+
+        const nextTokens = [...tokens, newPin];
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        setSelectedTokenId(newPin.id);
+        notifyParentState({ tokens : nextTokens });
+    };
+
     // 🖐️ 지도 바탕 드래그 시작
     const handleBoardStart = (e) => {
         // 🤏 손가락이 2개 이상 닿으면 핀치 줌 시작 - 진행 중이던 패닝/토큰 드래그는 취소
@@ -343,6 +385,11 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
 
         setSelectedTokenId(null);
         const pos = getPos(e);
+
+        if (isPinMode) {
+            placePinAt(pos.x, pos.y);
+            return; // 핀 모드에서는 지도를 패닝하지 않는다 - 클릭 = 핀 배치
+        }
 
         if (isAlignMode) {
             setIsPanning(true);
@@ -689,6 +736,22 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                             <span>🎭 토큰</span>
                             <input type="file" accept="image/*" multiple className="hidden" onChange={handleTokenUpload} />
                         </label>
+
+                        {/* 📍 장소 핀 찍기 - 지도 위 원하는 지점을 클릭해 이름표(예: "동굴 입구")를 붙인다.
+                            AI GM이 이 이름을 그대로 좌표로 인식하므로, 그림만 있고 아직 언급된 적 없는
+                            장소도 여기서 한 번 찍어두면 이후 대화에서 100% 정확하게 참조된다. */}
+                        <button
+                            type="button"
+                            onClick={() => setIsPinMode(v => !v)}
+                            className={`text-[0.75rem] font-bold px-2 py-1 rounded border transition-all ${
+                                isPinMode
+                                    ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.6)] animate-pulse'
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                            }`}
+                            title="지도를 클릭해 장소 이름표(핀)를 놓습니다. AI GM이 이 이름으로 위치를 정확히 인식합니다."
+                        >
+                            {isPinMode ? '📍 핀 찍는 중 (지도 클릭)' : '📍 핀 찍기'}
+                        </button>
                     </div>
                 </div>
                 </div>
@@ -701,11 +764,13 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                 onMouseDown={handleBoardStart}
                 onTouchStart={handleBoardStart}
                 className={`relative w-full flex-1 min-h-0 rounded-lg overflow-hidden border flex items-center justify-center bg-slate-950 ${
-                    isAlignMode 
-                        ? 'cursor-move border-amber-500/80' 
-                        : (isMapLocked ? 'cursor-default' : (isPanning ? 'cursor-grabbing' : 'cursor-grab'))
+                    isPinMode
+                        ? 'cursor-crosshair border-amber-500/80'
+                        : isAlignMode
+                            ? 'cursor-move border-amber-500/80'
+                            : (isMapLocked ? 'cursor-default' : (isPanning ? 'cursor-grabbing' : 'cursor-grab'))
                 }`}
-                style={{ borderColor: isAlignMode ? '#f59e0b' : 'var(--border-color)' }}
+                style={{ borderColor: (isPinMode || isAlignMode) ? '#f59e0b' : 'var(--border-color)' }}
             >
                 {/* 🔍 Pan & Zoom 뷰포트 */}
                 <div
@@ -775,19 +840,31 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                                     height: `${size}px`
                                 }}
                             >
-                                {/* HP 바 */}
-                                <div className="absolute -top-2.5 left-0 w-full h-1.5 bg-black/80 rounded-full overflow-hidden border border-slate-700">
-                                    <div className="h-full bg-emerald-500 transition-all" style={{ width: `${hpPercent}%` }} />
-                                </div>
+                                {/* HP 바 - 핀(장소 표식)은 HP 개념이 없으므로 생략 */}
+                                {!token.isPin && (
+                                    <div className="absolute -top-2.5 left-0 w-full h-1.5 bg-black/80 rounded-full overflow-hidden border border-slate-700">
+                                        <div className="h-full bg-emerald-500 transition-all" style={{ width: `${hpPercent}%` }} />
+                                    </div>
+                                )}
 
-                                {/* 토큰 이미지 */}
-                                <div className={`w-full h-full rounded-full ${
-                                    isSelected 
-                                        ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]' 
-                                        : 'border-2 border-amber-500/70 hover:border-amber-400'
-                                }`}>
-                                    <img src={token.url} alt={token.name} className="w-full h-full object-cover rounded-full pointer-events-none" />
-                                </div>
+                                {/* 토큰 이미지 / 핀(장소 표식) 마커 */}
+                                {token.isPin ? (
+                                    <div className={`w-full h-full rounded-full flex items-center justify-center bg-sky-950/90 text-[0.9em] ${
+                                        isSelected
+                                            ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
+                                            : 'border-2 border-sky-400/80 hover:border-sky-300'
+                                    }`}>
+                                        📍
+                                    </div>
+                                ) : (
+                                    <div className={`w-full h-full rounded-full ${
+                                        isSelected
+                                            ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
+                                            : 'border-2 border-amber-500/70 hover:border-amber-400'
+                                    }`}>
+                                        <img src={token.url} alt={token.name} className="w-full h-full object-cover rounded-full pointer-events-none" />
+                                    </div>
+                                )}
 
                                 {/* 실시간 좌표 라벨 */}
                                 {!isSelected && (
@@ -821,6 +898,13 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                             </div>
                         </div>
 
+                        {selectedToken.isPin ? (
+                            // 📍 핀(장소 표식)은 HP/크기 개념이 없으므로 위치 안내만 보여준다.
+                            // AI GM은 이 이름을 그대로 지도상 위치 참조로 사용한다.
+                            <div className="text-[0.68rem] text-slate-400 px-1 pb-0.5">
+                                📍 이 표식은 GM 채팅에서 "{selectedToken.name}"(으)로 언급되면 여기 좌표를 가리키는 데 쓰입니다. 드래그로 위치를 옮길 수 있습니다.
+                            </div>
+                        ) : (
                         <div className="grid grid-cols-2 gap-2 text-[0.7rem]">
                             {/* ❤️ HP 설정 칸 (직접 입력 input 포함) */}
                             <div className="flex flex-col gap-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
@@ -869,6 +953,7 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                                 </div>
                             </div>
                         </div>
+                        )}
                     </div>
                 )}
             </div>
