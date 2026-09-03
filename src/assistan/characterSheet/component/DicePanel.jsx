@@ -22,6 +22,10 @@ import {
   clearDiceBox,
   DICE_BOX_SELECTOR,
   DICE_RESULT_EVENT,
+  DICE_ROLLING_EVENT,
+  isDiceRollInProgress,
+  beginDiceCycle,
+  endDiceCycle,
 } from "../service/dice3DEngine";
 import d4BadgeIcon from "../resource/diceIcons/d4.svg";
 import d6BadgeIcon from "../resource/diceIcons/d6.svg";
@@ -247,7 +251,17 @@ const DicePanel = () => {
   // 이제는 사용자가 실제로 주사위 트레이를 펼칠 때(handleFabClick)만 미리 준비를 시작한다.
   const [expanded, setExpanded] = useState(false);
   const [diceQueue, setDiceQueue] = useState(EMPTY_QUEUE);
-  const [isRolling, setIsRolling] = useState(false);
+  // 🔒 "지금 뭔가 물리적으로 굴러가는 중이다"는 이 컴포넌트만의 상태가 아니라 dice3DEngine이
+  // 전역으로 관리한다 - 캐릭터 시트의 능력 체크 판정처럼 다른 트리에서 굴린 것까지 포함해서,
+  // 뭔가 굴러가는 동안엔 이 트레이의 버튼도 같이 비활성화되어야 "먼저 굴림이 안 끝났는데 여기서
+  // 또 눌러서 끼어드는" 상황이 안 생긴다. 초기값은 이 컴포넌트가 마운트되기 전에 이미 다른
+  // 곳에서 굴림이 시작돼 있을 극히 드문 경우까지 대비해 isDiceRollInProgress()로 잡는다.
+  const [isRolling, setIsRolling] = useState(isDiceRollInProgress);
+  useEffect(() => {
+    const onRollingChange = (e) => setIsRolling(!!e.detail?.isRolling);
+    window.addEventListener(DICE_ROLLING_EVENT, onRollingChange);
+    return () => window.removeEventListener(DICE_ROLLING_EVENT, onRollingChange);
+  }, []);
   const [overlay, setOverlay] = useState(null); // { mode, phase, sides, value, results, total, text }
   const [fabPosition, setFabPosition] = useState(loadFabPosition); // { top, left } - 드래그로 옮긴 FAB 위치
   const timersRef = useRef([]);
@@ -364,6 +378,14 @@ const DicePanel = () => {
 
   // 결과를 화면 전체에 띄웠다가, 잠시 후 손이 화면을 가로지르는 타이밍에 맞춰 실제 물리 캔버스도
   // 함께 비운다(clearDiceBox) — 이게 "던져진 주사위가 영원히 안 사라지던" 문제의 실제 해결책이다.
+  //
+  // ⚠️ 이 함수가 "굴림 사이클"의 끝을 결정한다(endDiceCycle). 오버레이가 화면에서 완전히
+  // 사라지고 물리 캔버스도 다 치워진 뒤에야 endDiceCycle을 호출해서 버튼들이 다시 눌리게
+  // 한다 - 그 전에 풀어버리면, 결과가 아직 보이는 동안 다음 굴림이 시작되고 그게 여기 다시
+  // 들어와 clearTimers()로 앞선 굴림의 정리 예약을 통째로 지워버려서(앞선 결과는 영원히 안
+  // 치워지고, 나중에 손이 쓸어갈 땐 그 사이 새로 굴려진 주사위까지 같이 쓸려나가는) 문제가
+  // 있었다. 지금은 beginDiceCycle()이 먼저 호출돼 있지 않으면 애초에 새 굴림을 시작할 수 없으므로
+  // (버튼이 비활성화됨) presentResult가 사이클 도중에 다시 호출될 일 자체가 없다.
   const presentResult = useCallback(
     (snapshot) => {
       clearTimers();
@@ -378,7 +400,10 @@ const DicePanel = () => {
             }, CLEAR_AT_MS),
           );
           timersRef.current.push(
-            setTimeout(() => setOverlay(null), RESULT_EXIT_MS),
+            setTimeout(() => {
+              setOverlay(null);
+              endDiceCycle();
+            }, RESULT_EXIT_MS),
           );
         }, RESULT_HOLD_MS),
       );
@@ -415,10 +440,12 @@ const DicePanel = () => {
 
   const handleRollQueue = async () => {
     const entries = Object.entries(diceQueue).filter(([, qty]) => qty > 0);
-    if (entries.length === 0 || isRolling) return;
+    // isDiceRollInProgress()는 모듈 변수를 즉시(동기적으로) 읽으므로, React state(isRolling)가
+    // 아직 리렌더로 반영되기 전의 아주 짧은 틈(연타)까지도 확실하게 막아준다.
+    if (entries.length === 0 || isDiceRollInProgress()) return;
 
     setExpanded(false);
-    setIsRolling(true);
+    beginDiceCycle(); // 결과가 다 표시되고 치워질 때까지(endDiceCycle, presentResult 안) 버튼이 잠긴다
 
     const specs = entries.map(([sides, qty]) => ({
       sides: Number(sides),
@@ -442,7 +469,6 @@ const DicePanel = () => {
       .join("  +  ");
     const text = `${results.length}개 굴림 = ${breakdown}  →  합계 ${total}`;
 
-    setIsRolling(false);
     presentResult(
       results.length > 1
         ? { mode: "group", results, total, text }

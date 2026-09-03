@@ -7,13 +7,17 @@ const SpellsAndFeaturesCard = ({
     specialFeatures, usedFeatures, onToggleUsed
   , spellSlots, usedSpellSlots, onToggleSpellSlot
   , cantrips, preparedSpells, onRollSpell
+  , isRolling
 }) => {
     // 남은 1레벨 슬롯이 있는지 계산 - 다 썼으면 준비된 주문 카드를 살짝 흐리게 표시해준다
     const usedSlotCount = Object.values(usedSpellSlots || {}).filter(Boolean).length;
     const noSlotsLeft = spellSlots > 0 && usedSlotCount >= spellSlots;
 
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)]" style={{ borderColor : 'var(--border-color)' }}>
+        <div
+            className={`p-3.5 rounded-xl border bg-[var(--card-bg)] transition-opacity ${isRolling ? 'opacity-50 pointer-events-none' : ''}`}
+            style={{ borderColor : 'var(--border-color)' }}
+        >
             <div
                 className="text-base font-bold pb-1.5 mb-3 border-b-2"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}

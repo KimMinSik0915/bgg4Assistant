@@ -15,7 +15,7 @@ import SkillsCard from "../component/SkillsCard";
 import EquipmentCard from "../component/EquipmentCard";
 import BattleMapPanel from "../component/BattleMapPanel";
 import GmChatPanel from "../component/GmChatPanel";
-import { rollPhysicalDie, DICE_BOX_SELECTOR, announceDiceResult } from "../service/dice3DEngine";
+import { rollPhysicalDie, DICE_BOX_SELECTOR, announceDiceResult, DICE_ROLLING_EVENT, isDiceRollInProgress, beginDiceCycle } from "../service/dice3DEngine";
 import "../resource/CSS/characterSheet.css";
 import TraitsCard from "../component/TraitsCard";
 import InventoryCard from "../component/InventoryCard";
@@ -101,6 +101,12 @@ class CharacterSheetManager extends Component {
     rollTimer = null;
 
     componentDidMount() {
+        // 🔒 "지금 뭔가 물리적으로 굴러가는 중이다"는 dice3DEngine이 전역으로 관리한다 - 주사위
+        // 트레이(DicePanel)처럼 이 컴포넌트가 모르는 다른 트리에서 굴린 것까지 포함해서, 뭔가
+        // 굴러가는 동안엔 능력치/기술/장비/주문 판정 버튼도 같이 비활성화되어야 서로 끼어들지 않는다.
+        this.setState({ isRolling : isDiceRollInProgress() });
+        window.addEventListener(DICE_ROLLING_EVENT, this.handleDiceRollingChange);
+
         // 📱 화면 폭 감지: 데스크탑(지도 메인 3분할) ↔ 모바일(탭 전환) 레이아웃을 JS로 분기
         // (CSS로 숨기기만 하면 BattleMapPanel/GmChatPanel이 두 벌 동시에 마운트되어 상태가 꼬이므로 실제로 하나만 렌더링한다)
         this.mobileMql = window.matchMedia(MOBILE_MEDIA_QUERY);
@@ -184,6 +190,7 @@ class CharacterSheetManager extends Component {
     }
 
     componentWillUnmount() {
+        window.removeEventListener(DICE_ROLLING_EVENT, this.handleDiceRollingChange);
         if (this.rollTimer) clearInterval(this.rollTimer);
         this.stopChatResize();
         this.stopSheetResize();
@@ -204,6 +211,10 @@ class CharacterSheetManager extends Component {
 
     handleMobileMqChange = (e) => {
         this.setState({ isMobile : e.matches });
+    }
+
+    handleDiceRollingChange = (e) => {
+        this.setState({ isRolling : !!e.detail?.isRolling });
     }
 
     clampChatWidth = (value) => {
@@ -828,8 +839,20 @@ class CharacterSheetManager extends Component {
     }
 
     executeRoll = async (label, sides, mod) => {
+        // 🚫 이미 뭔가(이 시트에서든, 주사위 트레이에서든) 굴러가는 중이면 여기서 막는다.
+        // isDiceRollInProgress()는 모듈 변수를 즉시 읽으므로 state(isRolling)가 아직 리렌더로
+        // 반영되기 전의 아주 짧은 틈(연타)까지도 확실하게 막아준다. 능력치/기술/장비/주문 카드
+        // 쪽 버튼도 isRolling일 때 비활성화되지만, 그건 눈에 보이는 방어일 뿐이고 실제 판정
+        // 시작 여부는 여기서 최종적으로 걸러진다.
+        if (isDiceRollInProgress()) return;
         if (this.rollTimer) clearInterval(this.rollTimer);
         this.setState({ isRolling : true, resultText : '굴리는 중...' });
+        // 굴림 결과는 announceDiceResult로 DicePanel에 넘어가 거기서 화면에 표시~치우기까지
+        // 담당한다 - "굴림 사이클"이 진짜로 끝나는 시점(결과가 완전히 사라진 뒤)은 이 함수가
+        // 아니라 DicePanel의 presentResult가 endDiceCycle()로 알려준다. 그래서 여기서는
+        // isRolling을 다시 false로 되돌리지 않는다 - 되돌리면 결과가 아직 화면에 떠 있는데
+        // 버튼이 풀려서 또 눌리는 문제가 재발한다.
+        beginDiceCycle();
 
         const rawRoll = await this.rollDiePhysically(sides);
 
@@ -845,7 +868,9 @@ class CharacterSheetManager extends Component {
             resultText = `${label}: ${total} [주사위 ${rawRoll}${modStr}]`;
         }
 
-        this.setState({ diceValue : total, isRolling : false, resultText });
+        // isRolling은 여기서 false로 되돌리지 않는다(위 주석 참고) - DICE_ROLLING_EVENT를 통해
+        // DicePanel이 결과 표시를 다 끝냈을 때 자동으로 false가 된다.
+        this.setState({ diceValue : total, resultText });
         announceDiceResult({ mode : 'single', sides, value : total, text : resultText });
     }
 
@@ -1108,7 +1133,7 @@ class CharacterSheetManager extends Component {
           , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
           , sheetCollapsed, sheetWidth, isResizingSheet, chatWidth, isResizingChat, isMobile, activeTab
           , mobileViewMode, mobileSheetHeight, isResizingMobileSheet, mobileChatHeight, isResizingMobileChat
-          , viewportHeight, viewportTop
+          , viewportHeight, viewportTop, isRolling
         } = this.state;
         const themeVars = themeToCssVars(themeKey);
         const hasWorkspace = !!charData;
@@ -1224,6 +1249,7 @@ class CharacterSheetManager extends Component {
                         spellDC={charData.spellDC}
                         spellAttackBonus={charData.spellAttackBonus}
                         onRollCheck={this.handler.rollCheck}
+                        isRolling={isRolling}
                     />
                 )}
 
@@ -1238,6 +1264,7 @@ class CharacterSheetManager extends Component {
                         cantrips={charData.cantrips}
                         preparedSpells={charData.preparedSpells}
                         onRollSpell={this.handler.rollSpell}
+                        isRolling={isRolling}
                     />
                 )}
 
@@ -1245,6 +1272,7 @@ class CharacterSheetManager extends Component {
                     <SkillsCard
                         skills={charData.skills}
                         onRollCheck={this.handler.rollCheck}
+                        isRolling={isRolling}
                     />
                 )}
 
@@ -1253,6 +1281,7 @@ class CharacterSheetManager extends Component {
                         equipmentSlots={charData.equipmentSlots}
                         onRollDamage={this.handler.rollWeaponDamage}
                         onShowInfo={this.handler.showEquipInfo}
+                        isRolling={isRolling}
                     />
                 )}
 

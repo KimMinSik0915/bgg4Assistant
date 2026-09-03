@@ -34,6 +34,69 @@ export const announceDiceResult = (payload) => {
     window.dispatchEvent(new CustomEvent(DICE_RESULT_EVENT, { detail : payload }));
 };
 
+// 🔒 물리 주사위 캔버스/물리 세계는 화면 전체에 딱 하나뿐인 공유 자원이고, 굴린 뒤에도 결과가
+// 화면에 몇 초간 떠 있다가(DicePanel의 풀스크린 오버레이) 손이 쓸어가며 치워지는 뒷정리까지
+// 딸려있다. 이걸 굴리는 진입점은 두 곳(주사위 트레이의 DicePanel, 캐릭터 시트의 능력치/기술/
+// 장비/주문 판정)이고 서로 다른 컴포넌트 트리에 있다.
+//
+// "물리적으로 구르는 동안만" 잠그면 부족하다 — 주사위가 멈춘 직후 버튼을 풀어버리면, 결과
+// 카드가 아직 화면에 떠 있는 동안 다음 굴림이 시작되고, 그게 끝나 결과를 보여줄 때
+// DicePanel.presentResult()가 자기 clearTimers()로 "앞선 결과를 치우는 예약(clearDiceBox
+// 타이머)"까지 통째로 취소해버린다. 그러면 앞선 굴림은 영원히 안 치워진 채로 남고, 나중에
+// 손이 쓸어갈 때는 그 사이 새로 굴려진 주사위까지 같이 쓸려나간다. 그래서 "잠금"의 단위를
+// 물리 굴림이 아니라 굴리기 버튼을 눌렀을 때부터 결과 오버레이가 완전히 사라지고 치워질
+// 때까지의 한 사이클 전체로 잡는다:
+//   - beginDiceCycle() : 굴리기를 시작하는 쪽(DicePanel.handleRollQueue,
+//     CharacterSheetManager.executeRoll)이 클릭 즉시 호출.
+//   - endDiceCycle()   : 결과 표시~정리까지 실제로 담당하는 DicePanel.presentResult()가,
+//     오버레이가 완전히 사라지는 시점(결과 유지 + 퇴장 애니메이션 다 끝난 뒤)에 호출.
+//     (두 진입점 모두 announceDiceResult로 결과를 넘기면 결국 DicePanel의 presentResult 하나로
+//     합류하므로, "끝"을 아는 건 언제나 DicePanel 쪽이다.)
+// 그리고 물리 엔진 호출(clear/roll) 자체도 enqueuePhysicsCall로 직렬화해서, 사이클 잠금이
+// 무슨 이유로든 새는 경우에도 최소한 물리적으로 두 굴림이 겹치는 일만은 항상 막는다.
+export const DICE_ROLLING_EVENT = 'cs-dice-rolling';
+let activeCycleCount = 0;
+let cycleSafetyTimer = null;
+// 물리 굴림 최대 대기(settleTimeout 4s) + 결과 유지(RESULT_HOLD_MS 2.6s) + 퇴장(RESULT_EXIT_MS 1.1s)보다
+// 넉넉히 크게 잡은 안전장치 — endDiceCycle이 무슨 이유로든(언마운트, 예외 등) 안 불려도 여기서 강제로 풀어준다.
+const CYCLE_SAFETY_TIMEOUT_MS = 12000;
+
+const emitRollingState = () => {
+    window.dispatchEvent(new CustomEvent(DICE_ROLLING_EVENT, { detail : { isRolling : activeCycleCount > 0 } }));
+};
+export const isDiceRollInProgress = () => activeCycleCount > 0;
+
+export const beginDiceCycle = () => {
+    activeCycleCount++;
+    if (cycleSafetyTimer) clearTimeout(cycleSafetyTimer);
+    cycleSafetyTimer = setTimeout(() => {
+        console.warn('[dice3DEngine] 주사위 굴림 사이클이 예상보다 오래 걸려 안전하게 잠금을 해제합니다.');
+        activeCycleCount = 0;
+        cycleSafetyTimer = null;
+        emitRollingState();
+    }, CYCLE_SAFETY_TIMEOUT_MS);
+    emitRollingState();
+};
+
+export const endDiceCycle = () => {
+    activeCycleCount = Math.max(0, activeCycleCount - 1);
+    if (activeCycleCount === 0 && cycleSafetyTimer) {
+        clearTimeout(cycleSafetyTimer);
+        cycleSafetyTimer = null;
+    }
+    emitRollingState();
+};
+
+// 물리 엔진에 실제로 명령(clear/roll)을 내리는 호출들을 직렬화하는 큐. 위 사이클 잠금과는
+// 별개의 하위 안전장치 — clearDiceBox()도 여기 태워서, 한 굴림의 roll()이 아직 안 끝났는데
+// 다른 곳의 clear()가 끼어들어 물리 시뮬레이션을 망가뜨리는 일이 없게 한다.
+let physicsQueue = Promise.resolve();
+const enqueuePhysicsCall = (task) => {
+    const run = physicsQueue.then(task, task);
+    physicsQueue = run.then(() => {}, () => {}); // 하나가 실패해도 대기열 자체는 끊기지 않게
+    return run;
+};
+
 let boxPromise = null;
 
 // ⚠️ 반드시 async 함수여야 한다. new DiceBox(...)는 대상 컨테이너의 DOM 노드를 "동기적으로" 찾는데,
@@ -113,7 +176,7 @@ const flattenResults = (raw) => {
  * sides개의 면을 가진 주사위 1개를 실제로 굴려서 나온 눈(raw value)을 반환한다.
  * 실패 시(에셋 로드 실패 등) null을 반환 — 호출부에서 Math.random() 폴백으로 이어간다.
  */
-export const rollPhysicalDie = async (selector, sides) => {
+export const rollPhysicalDie = (selector, sides) => enqueuePhysicsCall(async () => {
     try {
         const box = await getDiceBox(selector);
         box.clear();
@@ -123,13 +186,13 @@ export const rollPhysicalDie = async (selector, sides) => {
         console.error('[dice3DEngine] 3D 주사위 굴림 실패, 일반 난수로 대체합니다.', err);
         return null;
     }
-};
+});
 
 /**
  * 여러 종류/개수의 주사위를 한 번에 굴린다. specs: [{ sides, qty }, ...]
  * 반환: [{ sides, value }, ...] (개별 주사위 결과 평면 배열). 실패 시 null.
  */
-export const rollPhysicalDiceGroup = async (selector, specs) => {
+export const rollPhysicalDiceGroup = (selector, specs) => enqueuePhysicsCall(async () => {
     try {
         const box = await getDiceBox(selector);
         box.clear();
@@ -140,12 +203,12 @@ export const rollPhysicalDiceGroup = async (selector, specs) => {
         console.error('[dice3DEngine] 다중 주사위 굴림 실패, 일반 난수로 대체합니다.', err);
         return null;
     }
-};
+});
 
-export const clearDiceBox = async () => {
+export const clearDiceBox = () => enqueuePhysicsCall(async () => {
     if (!boxPromise) return;
     try {
         const box = await boxPromise;
         box.clear();
     } catch { /* noop */ }
-};
+});
