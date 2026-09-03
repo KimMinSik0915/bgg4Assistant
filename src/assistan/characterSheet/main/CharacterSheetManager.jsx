@@ -6,6 +6,7 @@ import { buildExportJson, downloadJson, sanitizeFileName } from "../util/exportC
 import { THEME_KEYS, themeToCssVars } from "../resource/dataSet/themes";
 import { gmTools } from "../resource/dataSet/gmTools";
 import { callGemini, splitResponseParts, userContent } from "../service/geminiService";
+import { calculateGridPos, parseGridLabel } from "../util/gridCoords";
 import SheetLoader from "../component/SheetLoader";
 import CharacterHeaderCard from "../component/CharacterHeaderCard";
 import HpCard from "../component/HpCard";
@@ -39,6 +40,73 @@ const MIN_MOBILE_CHAT_HEIGHT = 190; // 헤더+입력창(전송 버튼 포함)이
 const MIN_MOBILE_MAP_HEIGHT = 160; // 지도가 메인이므로 세로 스택에서도 이만큼은 항상 확보
 const MOBILE_RESIZER_SIZE = 20;    // 세로 리사이저 1개의 히트 영역 높이(px)
 const MOBILE_COLLAPSED_SHEET_BAR = 44; // 접힌 캐릭터 시트 바 높이(px)
+
+// 🔄 gmHistory 하위호환: 예전에는 Gemini 원본 형식({role:'user'|'model', parts:[{text}]}) 그대로
+// 저장했다. 지금은 { role:'user'|'assistant', text } 평문으로 다루므로, 로컬에 저장돼 있던 예전
+// 형식 세션을 불러올 때 한 번 변환해준다.
+const normalizeGmHistory = (rawHistory) => {
+    if (!Array.isArray(rawHistory)) return [];
+    return rawHistory.map(turn => {
+        if (typeof turn?.text === 'string') {
+            return { role : turn.role === 'model' ? 'assistant' : turn.role, text : turn.text };
+        }
+        const partsText = Array.isArray(turn?.parts) ? turn.parts.filter(p => p.text).map(p => p.text).join('\n') : '';
+        return { role : turn?.role === 'model' ? 'assistant' : 'user', text : partsText };
+    }).filter(turn => turn.text);
+};
+
+// 🧷 GM 응답 강제 스키마 (Gemini Structured Output). buildGmSystemInstruction의 JSON 형식 설명을
+// "요청"이 아니라 "강제"로 만든다 - Gemini가 ```json 코드펜스를 붙이거나 형식을 벗어나는 등 파싱이
+// 실패할 여지를 원천 차단해서, token_moves를 포함한 응답이 항상 유효한 JSON으로 오게 보장한다.
+// (추가 API 호출/토큰 비용 없이 같은 요청에 옵션만 하나 더 붙이는 것이라 사용량에는 영향이 없다.)
+const GM_RESPONSE_SCHEMA = {
+    type : 'OBJECT'
+  , properties : {
+        narrative : { type : 'STRING' }
+      , session_state : {
+            type : 'OBJECT'
+          , properties : {
+                loc : { type : 'STRING' }
+              , clues : { type : 'ARRAY', items : { type : 'STRING' } }
+              , quests : { type : 'ARRAY', items : { type : 'STRING' } }
+              , landmarks : {
+                    type : 'ARRAY'
+                  , items : {
+                        type : 'OBJECT'
+                      , properties : { name : { type : 'STRING' }, gridPos : { type : 'STRING' } }
+                      , required : ['name', 'gridPos']
+                    }
+                }
+            }
+        }
+      , token_moves : {
+            type : 'ARRAY'
+          , items : {
+                type : 'OBJECT'
+              , properties : {
+                    token : { type : 'STRING' }
+                  , to : { type : 'STRING' }
+                }
+              , required : ['token', 'to']
+            }
+        }
+      , location_lookup : { type : 'STRING' }
+    }
+  , required : ['narrative']
+};
+
+// 🔭 지도 이미지 비전 조회 응답 스키마. GM 응답에 location_lookup이 채워졌을 때만(=텍스트만으로는
+// 좌표를 못 찾은, 드문 경우에만) 딱 한 번 추가로 호출한다 - 매 턴 이미지를 보내지 않으므로 평소
+// 대화 비용에는 영향이 없다.
+const LOCATION_LOOKUP_SCHEMA = {
+    type : 'OBJECT'
+  , properties : {
+        found : { type : 'BOOLEAN' }
+      , x_percent : { type : 'NUMBER' }
+      , y_percent : { type : 'NUMBER' }
+    }
+  , required : ['found']
+};
 
 /**
  * @Author : 김민식
@@ -158,7 +226,7 @@ class CharacterSheetManager extends Component {
         if (savedSession) {
             try {
                 const parsed = JSON.parse(savedSession);
-                this.gmHistory = parsed.gmHistory || [];
+                this.gmHistory = normalizeGmHistory(parsed.gmHistory);
                 this.setState({
                     geminiApiKey: savedKey || '',
                     geminiModel: savedModel || DEFAULT_GEMINI_MODEL,
@@ -462,15 +530,142 @@ class CharacterSheetManager extends Component {
         }
     };
 
+    // 이동 가능한 실제 캐릭터/몬스터 토큰만 (핀은 제외)
     getCompressedMapText = () => {
         const { mapState } = this.state;
-        if (!mapState || !mapState.tokens || mapState.tokens.length === 0) return '배치된 토큰 없음';
+        const tokens = (mapState?.tokens || []).filter(t => !t.isPin);
+        if (tokens.length === 0) return '배치된 토큰 없음';
 
-        const tokenSummary = mapState.tokens
+        const tokenSummary = tokens
             .map((t) => `${t.name || '토큰'}(${t.gridPos || `${t.x},${t.y}`}${t.hp ? `, HP:${t.hp}` : ''})`)
             .join(', ');
 
         return `전투지도 좌표: [ ${tokenSummary} ]`;
+    };
+
+    // 사용자가 지도 위에 직접 찍어둔 장소 이름표(핀) - 좌표 조회의 1순위 소스
+    getCompressedPinsText = () => {
+        const { mapState } = this.state;
+        const pins = (mapState?.tokens || []).filter(t => t.isPin);
+        if (pins.length === 0) return null;
+
+        return pins.map((p) => `${p.name || '핀'}(${p.gridPos || `${p.x},${p.y}`})`).join(', ');
+    };
+
+    // 🤖 AI 응답의 token_moves(예: [{ token:"고블린 1", to:"C4" }])를 받아 실제 지도 토큰 좌표를 갱신한다.
+    // 지도 이미지를 AI에게 보여주는 대신, 이미 시스템 프롬프트로 내려준 격자 좌표 텍스트를 AI가
+    // 그대로 다시 되돌려주는 방식이므로 비전 호출/추가 API 왕복 없이(=API 사용량 추가 없이) 동작한다.
+    applyTokenMoves = (moves) => {
+        const { mapState } = this.state;
+        if (!mapState || !Array.isArray(mapState.tokens) || mapState.tokens.length === 0) return;
+        if (!Array.isArray(moves) || moves.length === 0) return;
+
+        const gridSize = Math.max(10, mapState.gridSize || 56);
+        const nextTokens = mapState.tokens.map(t => ({ ...t }));
+        let changed = false;
+
+        moves.forEach(move => {
+            const targetName = String(move?.token || move?.name || '').trim();
+            const targetPos = String(move?.to || move?.gridPos || '').trim();
+            if (!targetName || !targetPos) return;
+
+            const parsedPos = parseGridLabel(targetPos);
+            if (!parsedPos) return;
+
+            // 이름은 완전 일치를 우선하고, 없으면 부분 일치(대소문자 무시)로 찾는다.
+            // 핀(장소 표식)은 좌표 "참조용"일 뿐 이동 대상이 아니므로 검색에서 제외한다.
+            const lowerName = targetName.toLowerCase();
+            const movable = nextTokens.filter(t => !t.isPin);
+            let token = movable.find(t => (t.name || '').toLowerCase() === lowerName);
+            if (!token) token = movable.find(t => (t.name || '').toLowerCase().includes(lowerName));
+            if (!token) return;
+
+            const size = token.size ?? gridSize;
+            token.x = parsedPos.col * gridSize + Math.max(0, (gridSize - size) / 2);
+            token.y = (parsedPos.row - 1) * gridSize + Math.max(0, (gridSize - size) / 2);
+            token.gridPos = targetPos.toUpperCase();
+            changed = true;
+        });
+
+        if (!changed) return;
+
+        this.setState(prev => ({
+            mapState : { ...prev.mapState, tokens : nextTokens, aiTokenUpdateAt : Date.now() }
+        }), this.saveSession);
+    };
+
+    // 📍 지도 표식(핀)을 새로 하나 추가한다 - 사용자가 직접 찍는 것과 동일한 데이터 모양이며,
+    // AI가 지도 비전 조회로 찾아낸 위치를 영구히 기억시키는 데 쓴다(다음부터는 비전 호출 없이
+    // 이 핀 좌표를 텍스트로 바로 참조한다).
+    addMapPin = (name, x, y) => {
+        const { mapState } = this.state;
+        if (!mapState) return;
+
+        const gridSize = Math.max(10, mapState.gridSize || 56);
+        const newPin = {
+            id : Date.now() + Math.random()
+          , name
+          , isPin : true
+          , x, y
+          , gridPos : calculateGridPos(x, y, gridSize)
+          , size : Math.max(16, Math.round(gridSize * 0.6))
+        };
+        const nextTokens = [...(mapState.tokens || []), newPin];
+
+        this.setState(prev => ({
+            mapState : { ...prev.mapState, tokens : nextTokens, aiTokenUpdateAt : Date.now() }
+        }), this.saveSession);
+    };
+
+    // 🔭 GM 응답이 텍스트만으로 좌표를 못 찾아 location_lookup을 채웠을 때만 호출되는, 드문 경우
+    // 전용 보조 함수. 현재 활성 지도 "이미지"를 딱 한 번 Gemini에 보내 그 장소가 이미지 안 어디쯤
+    // 있는지(가로/세로 몇 % 지점) 추정을 받아온 뒤, 이미 알고 있는 이미지 픽셀 크기·격자 크기로
+    // 클라이언트에서 직접 격자 좌표를 계산한다 - AI에게 격자 좌표를 직접 맞히게 하지 않는 이유는
+    // 격자선은 화면에서 CSS로 덧그린 것일 뿐 실제 지도 이미지 파일에는 없기 때문이다.
+    resolveLocationViaVision = async (locationName) => {
+        const { mapState, geminiApiKey, geminiModel } = this.state;
+        const activeMap = mapState?.maps?.find(m => m.id === mapState.activeMapId);
+        if (!activeMap?.url || !activeMap.width || !activeMap.height) return null;
+
+        const match = /^data:([^;]+);base64,(.+)$/.exec(activeMap.url);
+        if (!match) return null;
+        const [, mimeType, base64] = match;
+
+        const prompt = [
+            '아래는 TRPG 전투지도 이미지다.'
+          , `이 이미지 안에서 "${locationName}"라고 부를 만한 장소나 지형지물을 찾아라.`
+          , '이미지 좌상단을 (0,0), 우하단을 (100,100)으로 볼 때, 그 장소의 중심이 가로로 몇 %(x_percent), 세로로 몇 %(y_percent) 지점인지 답하라.'
+          , '이미지에서 해당 장소를 찾을 수 없거나 확신이 서지 않으면 found를 false로 답하고 x_percent/y_percent는 생략하라.'
+        ].join('\n');
+
+        try {
+            const data = await callGemini({
+                apiKey : geminiApiKey
+              , model : geminiModel || DEFAULT_GEMINI_MODEL
+              , contents : [{
+                    role : 'user'
+                  , parts : [
+                        { text : prompt }
+                      , { inlineData : { mimeType, data : base64 } }
+                    ]
+                }]
+              , responseSchema : LOCATION_LOOKUP_SCHEMA
+            });
+
+            const { text } = splitResponseParts(data);
+            const parsed = JSON.parse(text);
+            if (!parsed.found) return null;
+
+            const xPercent = Math.max(0, Math.min(100, Number(parsed.x_percent) || 0));
+            const yPercent = Math.max(0, Math.min(100, Number(parsed.y_percent) || 0));
+            const x = (xPercent / 100) * activeMap.width;
+            const y = (yPercent / 100) * activeMap.height;
+
+            return { x, y, gridPos : calculateGridPos(x, y, mapState.gridSize || 56) };
+        } catch (e) {
+            console.error('지도 장소 비전 조회 실패:', e);
+            return null;
+        }
     };
 
     handler = {
@@ -804,7 +999,7 @@ class CharacterSheetManager extends Component {
         const uiState = targetCharData?._sheetUiState || {};
 
         if (isSessionBackup) {
-            this.gmHistory = parsed.gmHistory || [];
+            this.gmHistory = normalizeGmHistory(parsed.gmHistory);
             this.setState({
                 charData,
                 originalRawJson: parsed.originalRawJson || targetCharData,
@@ -962,11 +1157,18 @@ class CharacterSheetManager extends Component {
           , '  "session_state": {'
           , '    "loc": "현재 위치 ID",'
           , '    "clues": ["플레이어가 알게 된 핵심 단서 및 NPC 대화 내용 1줄 요약 누적"],'
-          , '    "quests": ["현재 진행 중인 퀘스트/목표"]'
-          , '  }'
+          , '    "quests": ["현재 진행 중인 퀘스트/목표"],'
+          , '    "landmarks": [{ "name": "동굴 입구 같은 장소/지형지물 이름", "gridPos": "그 장소의 격자 좌표(예: D5)" }]'
+          , '  },'
+          , '  "token_moves": [{ "token": "전투지도 토큰 이름(부분 일치 가능)", "to": "이동할 격자 좌표(예: C4) - 반드시 격자 좌표 형식" }],'
+          , '  "location_lookup": "좌표를 모르는 장소 이름 (없으면 생략)"'
           , '}'
           , '```'
           , '- 플레이어가 탐색, NPC 대화 등을 통해 중요 시나리오 정보/단서를 얻으면 session_state.clues 배열에 1줄 요약으로 누적 기록하십시오.'
+          , '- token_moves는 전투지도에 실제로 배치된 토큰이 이번 턴에 이동했을 때만 채우고(이동이 없으면 빈 배열 [] 또는 생략), 아래 "전투지도 좌표"/"지도 표식(핀)" 목록에 없는 이름은 절대 지어내지 않는다.'
+          , '- token_moves[].to는 항상 격자 좌표(예: C4)여야 하며 "동굴", "제단" 같은 장소 이름을 그대로 넣지 않는다. 장소 이름으로 이동 요청이 오면 아래 순서로 좌표를 찾는다: ① 지도 표식(핀) 목록 ② 아래 토큰 목록(장소 이름의 토큰이 있는 경우) ③ session_state.landmarks. 여기서 찾은 gridPos를 그대로 token_moves[].to에 사용한다.'
+          , '- 위 ①~③ 어디에서도 좌표를 찾을 수 없는, 완전히 처음 언급되는 장소라면 **좌표를 추측하지 말고** 그 이동은 이번 턴에 보류한다(해당 token_moves는 만들지 않는다). 대신 최상위 응답에 "location_lookup"에 그 장소 이름을 그대로 채우고, narrative에는 "잠시 지도를 확인해보겠다" 같은 자연스러운 짧은 서술만 담는다 - 좌표는 시스템이 지도 이미지를 직접 보고 알려줄 것이다.'
+          , '- session_state.landmarks: 지도 표식(핀)에 없던 장소의 좌표가 다른 경로(예: location_lookup 결과, 대화 중 사용자가 직접 알려줌)로 새로 확정되면 { name, gridPos }로 기록한다. landmarks는 매 응답마다 지금까지 확정된 항목을 전부 포함해 다시 보내라(clues/quests와 동일한 누적 방식). 한 번 정한 장소의 좌표는 이후에도 바꾸지 말고 일관되게 유지한다.'
           , ''
           , '## 3. 진행 방식 규칙 - 자유 서술 및 주사위 판정 수칙'
           , '- 매 턴 끝에 "1번, 2번" 같은 선택지를 나열하지 않는다.'
@@ -1008,8 +1210,18 @@ class CharacterSheetManager extends Component {
         }
 
         if (this.state.mapState?.tokens?.length > 0) {
+            const pinsText = this.getCompressedPinsText();
+
             instructionParts.push('');
             instructionParts.push(`## ${this.getCompressedMapText()}`);
+            instructionParts.push('- 위 좌표는 "열알파벳+행숫자"(예: C4 = C열 4행) 격자 표기이며, 지도 이미지가 아니라 이 텍스트가 곧 현재 지도 상태다.');
+            instructionParts.push('- 전투/이동으로 위 토큰 중 하나가 실제로 자리를 옮기면, 응답 JSON의 token_moves에 { "token": "위 목록의 이름과 일치", "to": "새 격자 좌표" }를 담아 알려라. 그러면 지도 위 토큰이 그 좌표로 자동 이동한다.');
+
+            if (pinsText) {
+                instructionParts.push('');
+                instructionParts.push(`## 지도 표식(핀) 좌표: [ ${pinsText} ]`);
+                instructionParts.push('- 이 표식들은 사용자가 지도 위에 직접 찍어둔 "장소 이름 = 정확한 좌표" 목록이다. 장소 이름으로 이동 요청이 오면 가장 먼저 이 목록에서 찾아라 - 여기 있는 좌표는 다른 어떤 추측보다 정확하다.');
+            }
         }
 
         if (scenarioData) {
@@ -1027,14 +1239,10 @@ class CharacterSheetManager extends Component {
         if ((!gmInput.trim() && gmAttachments.length === 0) || !geminiApiKey || !charData || this.state.isGmLoading) return;
 
         const userMessage = gmInput.trim();
-        const currentTurnContent = userContent(userMessage, gmAttachments);
 
         const historyText = gmAttachments.length > 0
             ? `${userMessage}\n[첨부 파일: ${gmAttachments.map(f => f.name).join(', ')}]`
             : userMessage;
-
-        const recentHistory = this.gmHistory.slice(-6);
-        const requestContents = [...recentHistory, currentTurnContent];
 
         const displayText = gmAttachments.length > 0
             ? `${userMessage}\n${gmAttachments.map(f => `📎 ${f.name}`).join('\n')}`
@@ -1058,32 +1266,39 @@ class CharacterSheetManager extends Component {
 
         try {
             const systemInstruction = this.buildGmSystemInstruction();
+            // this.gmHistory는 { role: 'user'|'assistant', text } 평문으로 보관하고, 요청 시점에
+            // Gemini의 { role:'user'|'model', parts:[{text}] } 형식으로 변환해서 보낸다.
+            const recentHistory = this.gmHistory.slice(-6);
+            const requestContents = [
+                ...recentHistory.map(turn => ({
+                    role : turn.role === 'assistant' ? 'model' : 'user', parts : [{ text : turn.text }]
+                }))
+              , userContent(userMessage, gmAttachments)
+            ];
 
             const data = await callGemini({
                 apiKey : geminiApiKey, model : geminiModel || DEFAULT_GEMINI_MODEL
               , systemInstruction, contents : requestContents
+              , responseSchema : GM_RESPONSE_SCHEMA
             }, handleRetryNotice);
 
-            this.gmHistory.push({ role: 'user', parts: [{ text: historyText }] });
+            const { text, functionCalls } = splitResponseParts(data);
 
-            const { text, functionCalls, modelContent } = splitResponseParts(data);
+            // ⚠️ gmTools(gmFunctionDeclarations)가 비어 있어 API에 tools로 등록되지 않으므로
+            // functionCalls는 항상 빈 배열이다 - 실제 시트 조작은 아래 JSON 파싱(narrative/
+            // session_state/token_moves) 경로로만 이뤄진다.
+            if (functionCalls && functionCalls.length > 0) {
+                functionCalls.forEach(call => this.runGmTool(call.name, call.args || {}));
+            }
 
-            this.gmHistory.push(modelContent || { role : 'model', parts : [{ text }] });
-
+            this.gmHistory.push({ role : 'user', text : historyText });
+            this.gmHistory.push({ role : 'assistant', text : text || '' });
             if (this.gmHistory.length > 6) {
                 this.gmHistory = this.gmHistory.slice(-6);
             }
 
             const newMessages = [];
-
-            if (functionCalls && functionCalls.length > 0) {
-                functionCalls.forEach(call => {
-                    const summaryText = this.runGmTool(call.name, call.args || {});
-                    if (summaryText !== null) {
-                        newMessages.push({ role : 'system', text : summaryText });
-                    }
-                });
-            }
+            let locationLookupName = null;
 
             if (text) {
                 let parsedNarrative = text;
@@ -1105,12 +1320,50 @@ class CharacterSheetManager extends Component {
                                 }
                             }), this.saveSession);
                         }
+
+                        if (Array.isArray(parsed.token_moves) && parsed.token_moves.length > 0) {
+                            this.applyTokenMoves(parsed.token_moves);
+                        }
+
+                        if (typeof parsed.location_lookup === 'string' && parsed.location_lookup.trim()) {
+                            locationLookupName = parsed.location_lookup.trim();
+                        }
                     }
                 } catch (e) {
                     parsedNarrative = text;
                 }
 
                 newMessages.push({ role : 'gm', text : parsedNarrative });
+            }
+
+            // 🔭 GM이 텍스트만으로는 좌표를 못 찾아 location_lookup을 채운, 드문 경우에만 지도
+            // 이미지를 1회 조회한다 - 평소 대화 흐름은 이 블록에 들어오지 않는다(usage 영향 없음).
+            if (locationLookupName) {
+                const found = await this.resolveLocationViaVision(locationLookupName);
+                if (found) {
+                    this.setState(prev => {
+                        const prevLandmarks = prev.sessionState?.landmarks || [];
+                        return {
+                            sessionState : {
+                                ...prev.sessionState
+                              , landmarks : [
+                                    ...prevLandmarks.filter(l => l.name !== locationLookupName)
+                                  , { name : locationLookupName, gridPos : found.gridPos }
+                                ]
+                            }
+                        };
+                    });
+                    this.addMapPin(locationLookupName, found.x, found.y);
+                    newMessages.push({
+                        role : 'system'
+                      , text : `📍 지도에서 "${locationLookupName}"의 위치를 찾아 표식(${found.gridPos})을 추가했습니다. 같은 요청을 다시 말씀해 주세요!`
+                    });
+                } else {
+                    newMessages.push({
+                        role : 'system'
+                      , text : `⚠️ 지도에서 "${locationLookupName}"을(를) 찾지 못했습니다. 지도에서 [📍 핀 찍기]로 직접 위치를 표시해 주시면 이후로는 정확히 인식합니다.`
+                    });
+                }
             }
 
             this.setState(prev => ({

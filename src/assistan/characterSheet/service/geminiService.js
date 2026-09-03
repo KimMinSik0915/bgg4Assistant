@@ -17,11 +17,13 @@ const endpoint = (model, apiKey) => `${GEMINI_API_BASE}/${model}:generateContent
  * @param {string} systemInstruction  GM 역할/성격을 지정하는 시스템 프롬프트
  * @param {Array}  contents   [{ role: 'user'|'model'|'function', parts: [...] }, ...]
  * @param {Array}  tools      gmTools.js의 gmTools
+ * @param {Object} responseSchema (선택) 응답을 이 스키마에 맞는 JSON으로 강제(Structured Output).
+ *                                넘기면 응답이 항상 유효한 JSON이 되어 별도 파싱 실패 없이 바로 사용 가능하다.
  * @param {Function} onRetryNotice (선택) 재시도 시 UI에 대기 시간을 알릴 콜백 함수
  * @param {number} retries   최대 재시도 횟수 (기본값: 3회)
  */
 export const callGemini = async (
-    { apiKey, model, systemInstruction, contents },
+    { apiKey, model, systemInstruction, contents, responseSchema },
     onRetryNotice = null,
     retries = 3
 ) => {
@@ -31,6 +33,9 @@ export const callGemini = async (
       , body : JSON.stringify({
             systemInstruction : systemInstruction ? { parts : [{ text : systemInstruction }] } : undefined
           , contents
+          , generationConfig : responseSchema
+                ? { responseMimeType : 'application/json', responseSchema }
+                : undefined
         })
     });
 
@@ -58,7 +63,7 @@ export const callGemini = async (
 
             // 대기 완료 후 재귀적으로 재호출 (retries 횟수 차감)
             return callGemini(
-                { apiKey, model, systemInstruction, contents },
+                { apiKey, model, systemInstruction, contents, responseSchema },
                 onRetryNotice,
                 retries - 1
             );
