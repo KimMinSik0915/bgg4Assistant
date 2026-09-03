@@ -80,6 +80,12 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
     const alignStartRef = useRef({ x: 0, y: 0 });
     const boardRef = useRef(null);
 
+    // 👹 AI가 token_spawns로 생성한 토큰은 이미지가 없다(url 없음) - 그 토큰을 클릭하면 이 숨겨진
+    // input을 대신 열어 사용자가 바로 이미지를 골라 넣을 수 있게 한다. 어느 토큰에 넣을지는
+    // ref로 잠깐 기억해뒀다가 파일 선택이 끝나면 사용한다.
+    const pendingImageTokenIdRef = useRef(null);
+    const pendingImageInputRef = useRef(null);
+
     // ⚡ 클로저 문제 방지용 tokensRef (항상 최신 tokens 상태 유지)
     const tokensRef = useRef(tokens);
     useEffect(() => {
@@ -569,6 +575,27 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         notifyParentState({ tokens: nextTokens });
     };
 
+    // 👹 AI가 만든(이미지 없는) 토큰을 클릭했을 때 - 어느 토큰인지 기억해두고 숨은 파일 선택창을 연다
+    const openImagePickerFor = (tokenId) => {
+        pendingImageTokenIdRef.current = tokenId;
+        pendingImageInputRef.current?.click();
+    };
+
+    // 📷 파일 선택이 끝나면 압축해서 그 토큰의 url로 채워넣는다 (이제 일반 토큰과 동일하게 보인다)
+    const handlePendingImageChange = async (e) => {
+        const file = e.target.files?.[0];
+        const tokenId = pendingImageTokenIdRef.current;
+        e.target.value = '';
+        pendingImageTokenIdRef.current = null;
+        if (!file || tokenId === null) return;
+
+        const { url } = await compressImage(file, 400, 0.8);
+        const nextTokens = tokensRef.current.map(t => t.id === tokenId ? { ...t, url } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
+    };
+
     const activeMap = maps.find(m => m.id === activeMapId);
     const selectedToken = tokens.find(t => t.id === selectedTokenId);
     const currentGridStyle = GRID_COLORS[gridColorKey] || GRID_COLORS.amber;
@@ -727,6 +754,16 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                     </div>
 
                     <div className="flex items-center gap-1">
+                        {/* 👹 AI(GM)가 token_spawns로 만든, 아직 이미지가 없는 토큰용 - 지도에서 그 토큰을
+                            클릭하면 openImagePickerFor()가 이 숨은 입력을 대신 열어준다. 화면에는 보이지 않는다. */}
+                        <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            ref={pendingImageInputRef}
+                            onChange={handlePendingImageChange}
+                        />
+
                         <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded bg-[var(--primary-color,#4a5568)] text-white hover:opacity-90">
                             <span>➕ 지도</span>
                             <input type="file" accept="image/*" multiple className="hidden" onChange={handleMapUpload} />
@@ -829,6 +866,11 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                                         e.stopPropagation();
                                         if (!dragRef.current.isDragging) {
                                             setSelectedTokenId(prev => (prev === token.id ? null : token.id));
+                                            // 👹 AI가 이미지 없이 생성한 토큰(핀 제외)을 클릭하면 곧바로
+                                            // 이미지 선택창을 띄운다 - "누르면 이미지를 넣는다"는 흐름
+                                            if (!token.isPin && !token.url) {
+                                                openImagePickerFor(token.id);
+                                            }
                                         }
                                     }
                                 }}
@@ -847,7 +889,7 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                                     </div>
                                 )}
 
-                                {/* 토큰 이미지 / 핀(장소 표식) 마커 */}
+                                {/* 토큰 이미지 / 핀(장소 표식) 마커 / AI가 만든 이미지 없는 토큰 플레이스홀더 */}
                                 {token.isPin ? (
                                     <div className={`w-full h-full rounded-full flex items-center justify-center bg-sky-950/90 text-[0.9em] ${
                                         isSelected
@@ -856,7 +898,7 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                                     }`}>
                                         📍
                                     </div>
-                                ) : (
+                                ) : token.url ? (
                                     <div className={`w-full h-full rounded-full ${
                                         isSelected
                                             ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
@@ -864,12 +906,22 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                                     }`}>
                                         <img src={token.url} alt={token.name} className="w-full h-full object-cover rounded-full pointer-events-none" />
                                     </div>
+                                ) : (
+                                    // 👹 GM(AI)이 방금 만든 토큰 - 이미지가 아직 없다. 클릭하면 바로 사진을 넣을 수 있다.
+                                    <div className={`w-full h-full rounded-full flex items-center justify-center bg-red-950/80 border-2 border-dashed animate-pulse ${
+                                        isSelected
+                                            ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 border-amber-400'
+                                            : 'border-red-400/80 hover:border-red-300'
+                                    }`} title="클릭해서 이미지 넣기">
+                                        <span className="text-[0.85em]">➕🖼️</span>
+                                    </div>
                                 )}
 
                                 {/* 실시간 좌표 라벨 */}
                                 {!isSelected && (
                                     <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[0.6rem] text-slate-200 bg-black/90 px-1 rounded whitespace-nowrap pointer-events-none">
                                         {token.name} <span className="text-amber-400 font-bold font-mono">({token.gridPos || 'A1'})</span>
+                                        {!token.isPin && !token.url && <span className="text-red-400 font-bold"> 이미지 필요</span>}
                                     </div>
                                 )}
                             </div>
@@ -897,6 +949,17 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                                 <button onClick={() => setSelectedTokenId(null)} className="px-2 py-0.5 text-[0.68rem] bg-slate-800 text-slate-300 rounded border border-slate-700">✖️ 닫기</button>
                             </div>
                         </div>
+
+                        {/* 👹 AI가 만든, 아직 이미지 없는 토큰 - 지도에서 바로 클릭해도 열리지만
+                            여기서도 눌러서 이미지를 넣을 수 있게 한 번 더 노출한다 */}
+                        {!selectedToken.isPin && !selectedToken.url && (
+                            <button
+                                onClick={() => openImagePickerFor(selectedToken.id)}
+                                className="text-[0.72rem] font-bold px-2 py-1.5 rounded border border-dashed border-red-400/80 bg-red-950/60 text-red-200 hover:bg-red-900/60 animate-pulse"
+                            >
+                                🖼️ 이 토큰에 이미지 넣기
+                            </button>
+                        )}
 
                         {selectedToken.isPin ? (
                             // 📍 핀(장소 표식)은 HP/크기 개념이 없으므로 위치 안내만 보여준다.
