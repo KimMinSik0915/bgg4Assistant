@@ -202,3 +202,183 @@
 }
 .cs-hand-collect .cs-hand-open { animation: cs-hand-open-fade 1.1s ease both; }
 .cs-hand-collect .cs-hand-fist { animation: cs-hand-fist-fade 1.1s ease both; }
+
+/* ===== 퇴장 연출 선택지 (DicePanel의 설정 - "재가 되어 흩날리기" / "소용돌이" / "은은하게") =====
+   위의 cs-result-collected + cs-hand-collect(손이 쓸어가기)가 기본값이고, 아래는 설정에서
+   고를 수 있는 대체 연출들이다. 모두 DicePanel의 RESULT_EXIT_MS(1.1s)/CLEAR_AT_MS(약 47~48%
+   지점에서 실제 물리 캔버스를 비움)에 맞춰 지속시간을 1.1s 안팎으로 맞춘다. */
+
+/* 🔥 재가 되어 흩날리기 - 결과 카드(합계/문구)는 옆으로 쓱 미끄러지며 사라진다 */
+@keyframes cs-result-swipe-out {
+    0%   { opacity: 1; transform: translate(0,0) scale(1) rotate(0deg); filter: blur(0); }
+    30%  { opacity: 1; transform: translate(0,0) scale(1) rotate(0deg); }
+    100% { opacity: 0; transform: translate(-62vw, 5vh) scale(0.82) rotate(-7deg); filter: blur(2px); }
+}
+.cs-result-swipe-out {
+    animation: cs-result-swipe-out 1.1s cubic-bezier(.55,0,.35,1) both;
+}
+
+/* 🔥 개별 주사위 아이콘이 진짜로 "파삭" 조각나는 연출 (DiceShatter, DicePanel.jsx) - 원본
+   아이콘은 아주 짧게 잔상처럼 남았다 사라지고, 그 자리에서 6개의 삼각형 파편(clip-path로 미리
+   쪼개둠)이 저마다 다른 방향/각도로 튕겨 날아가며 사라진다. */
+@keyframes cs-dice-shatter-fade-out {
+    0%   { opacity: 1; filter: brightness(1); }
+    100% { opacity: 0; filter: brightness(0.6); }
+}
+.cs-dice-shatter-fade {
+    animation: cs-dice-shatter-fade-out 0.32s ease-in both;
+}
+@keyframes cs-dice-shard-fly {
+    0%   { opacity: 1; transform: translate(0,0) rotate(0deg) scale(1); }
+    12%  { opacity: 1; transform: translate(0,0) rotate(0deg) scale(1.04); } /* 아주 짧게 금이 가는 순간의 정지 */
+    100% { opacity: 0; transform: translate(var(--shard-dx,0), var(--shard-dy,0)) rotate(var(--shard-rot,0deg)) scale(0.3); }
+}
+.cs-dice-shard {
+    animation: cs-dice-shard-fly 0.95s cubic-bezier(.22,.85,.35,1) both;
+    will-change: transform, opacity;
+}
+
+/* 🔥 화면 곳곳에서 잉걸불/재 입자가 위로 흩날리며 사라진다 (좌표/드리프트는 JS에서 랜덤 생성) */
+.cs-ash-burst {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 1;
+}
+@keyframes cs-ash-mote-fly {
+    0%   { opacity: 0; transform: translate(0,0) scale(1); }
+    18%  { opacity: 1; }
+    100% { opacity: 0; transform: translate(var(--ash-mx, 0), var(--ash-my, -30vh)) scale(0.15); }
+}
+.cs-ash-mote {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(0.3px);
+    animation: cs-ash-mote-fly 1.05s ease-out both;
+}
+
+/* 🌀 소용돌이로 빨려들기 - 카드 전체(합계/문구)는 회전하며 배경째로 오그라들고, 그 안의
+   주사위들은 (cs-dice-vortex-spin-out으로) 제자리에서 맹렬히 회전하며 줄어든다. "이게
+   소용돌이다"라는 인상은 주로 아래의 cs-vortex-ring(빙글빙글 도는 톱니 고리)과 cs-vortex-burst
+   (화면 정중앙 한 점으로 실제로 빨려들어가는 빛줄기들)가 만든다 - 개별 주사위는 화면 위 각자
+   다른 위치에 있어서, 주사위 자신의 애니메이션만으로는 "하나의 공통된 중심으로 빨려든다"는
+   착시를 만들 수 없기 때문이다(각자 제자리에서만 움직이므로). */
+@keyframes cs-result-vortex-out {
+    0%   { opacity: 1; transform: scale(1) rotate(0deg); filter: blur(0); }
+    60%  { opacity: 1; transform: scale(0.85) rotate(220deg); }
+    100% { opacity: 0; transform: scale(0.05) rotate(540deg); filter: blur(3px); }
+}
+.cs-result-vortex-out {
+    animation: cs-result-vortex-out 1.1s cubic-bezier(.55,0,.1,1) both;
+    transform-origin: 50% 55%;
+}
+/* 🌀 주사위 하나하나는 제자리에서 맹렬히 회전하며 줄어들어 사라진다 (--vspin의 부호로
+   시계/반시계를 랜덤하게 섞는다 - DicePanel.jsx의 makeVortexVars). */
+@keyframes cs-dice-vortex-spin-out {
+    0%   { opacity: 1; transform: rotate(0deg) scale(1); }
+    100% { opacity: 0; transform: rotate(var(--vspin,720deg)) scale(0.08); }
+}
+.cs-dice-vortex-spin-out {
+    display: inline-block;
+    animation: cs-dice-vortex-spin-out 1.05s cubic-bezier(.5,0,.15,1) both;
+    will-change: transform, opacity;
+}
+
+/* 🌀 화면 정중앙 한 점으로 실제로 빨려들어가는 빛줄기들(DicePanel.jsx의 VortexBurst) - 모든
+   빛줄기가 정확히 같은 기준점(뷰포트 정중앙, top:50%/left:50%)에서 뻗어나가므로, 반지름
+   (--vb-r0)이 0으로 줄어드는 애니메이션이 "여러 방향에서 한 점으로 빨려드는" 소용돌이를
+   수학적으로 정확하게 만들어준다 - 개별 주사위 애니메이션과 달리 이건 진짜로 한 점에 모인다. */
+.cs-vortex-burst {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 1;
+}
+@keyframes cs-vortex-mote-spiral {
+    0%   { opacity: 0; transform: rotate(var(--vb-a0,0deg)) translateX(var(--vb-r0,160px)); }
+    14%  { opacity: 1; }
+    100% { opacity: 0; transform: rotate(calc(var(--vb-a0,0deg) + var(--vb-spin,640deg))) translateX(0px); }
+}
+.cs-vortex-mote {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    height: 2.5px;
+    border-radius: 999px;
+    transform-origin: 0 50%; /* 왼쪽 끝(이 점)이 항상 화면 정중앙에 오도록 - translateX(반지름)이 그 점에서부터 뻗어나간다 */
+    background: linear-gradient(90deg,
+        color-mix(in srgb, var(--accent-color, #22d3ee) 95%, white) 0%,
+        color-mix(in srgb, var(--highlight, #818cf8) 55%, transparent) 70%,
+        transparent 100%);
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent-color, #22d3ee) 70%, transparent));
+    animation: cs-vortex-mote-spiral 1.05s cubic-bezier(.45,0,.2,1) both;
+}
+
+/* 🌀 화면 정중앙에서 빙글빙글 도는 톱니 무늬 고리(repeating-conic-gradient) - 매끈한 원보다
+   또렷하게 "회전하는 원반"으로 읽힌다. 위의 cs-vortex-burst와 같은 중심(뷰포트 정중앙)을 써서
+   둘이 하나의 소용돌이처럼 보이게 맞춘다. */
+@keyframes cs-vortex-ring-spin {
+    0%   { opacity: 0; transform: translate(-50%,-50%) rotate(0deg) scale(1.3); }
+    15%  { opacity: 0.85; }
+    100% { opacity: 0; transform: translate(-50%,-50%) rotate(720deg) scale(0.05); }
+}
+.cs-vortex-ring {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: min(56vw, 420px);
+    height: min(56vw, 420px);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 1;
+    background: repeating-conic-gradient(from 0deg,
+        color-mix(in srgb, var(--accent-color, #22d3ee) 75%, transparent) 0deg 10deg,
+        color-mix(in srgb, var(--highlight, #818cf8) 45%, transparent) 10deg 20deg,
+        transparent 20deg 36deg);
+    filter: blur(1.5px) drop-shadow(0 0 24px color-mix(in srgb, var(--accent-color, #22d3ee) 45%, transparent));
+    animation: cs-vortex-ring-spin 1.1s cubic-bezier(.5,0,.15,1) both;
+}
+
+/* 🎲→💨 실제로 화면을 굴러다니다 착지한 물리 주사위(WebGL 캔버스, #cs-dice-box-canvas-root)
+   자체를 감춘다 - filter/opacity/transform은 캔버스를 포함한 그 안의 모든 내용에 그대로
+   적용되므로, 실제로 널브러져 있던 주사위들이 "뚝 끊기듯" 지워지는 대신 눈에 보이게 사라진다.
+   DicePanel의 CLEAR_AT_MS(약 520ms)보다 살짝 길게 잡아, 실제 clearDiceBox() 호출 시점엔
+   이미 대부분 안 보이는 상태가 되어 있게 한다.
+   ⚠️ 검게 어두워지는 brightness/contrast 조작은 일부러 뺐다 - "사라진다"가 아니라 "화면이
+   꺼진다"처럼 보여서(어둡게 물들었다가 사라지는 게 아니라 검은 화면처럼 읽힘) 오히려 어색했다.
+   블러+채도만 살짝 올리며 페이드아웃해서, 뒤에 겹쳐 뜨는 재/불티 파티클(AshBurst)이 색을 맡고
+   캔버스 자신은 그냥 초점이 나가며 옅어지듯 사라지게 한다. */
+@keyframes cs-physical-dice-crumble {
+    0%   { opacity: 1; filter: blur(0) saturate(1); }
+    35%  { opacity: 1; filter: blur(1.5px) saturate(1.2); }
+    100% { opacity: 0; filter: blur(9px) saturate(1.35); }
+}
+.cs-physical-dice-crumble {
+    animation: cs-physical-dice-crumble 0.6s ease-out both;
+}
+@keyframes cs-physical-dice-vortex {
+    0%   { opacity: 1; transform: scale(1) rotate(0deg); filter: blur(0); }
+    100% { opacity: 0; transform: scale(0.25) rotate(420deg); filter: blur(8px); }
+}
+.cs-physical-dice-vortex {
+    animation: cs-physical-dice-vortex 0.62s cubic-bezier(.55,0,.2,1) both;
+    transform-origin: 50% 55%;
+}
+@keyframes cs-physical-dice-fade {
+    0%   { opacity: 1; }
+    100% { opacity: 0; }
+}
+.cs-physical-dice-fade {
+    animation: cs-physical-dice-fade 0.6s ease-in both;
+}
+
+/* ✨ 은은하게 사라지기 - 파티클/장식 없이 결과와 주사위가 위로 살짝 떠오르며 조용히 페이드아웃 */
+@keyframes cs-result-fade-out {
+    0%   { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(-42px) scale(0.92); }
+}
+.cs-result-fade-out {
+    animation: cs-result-fade-out 1.1s ease-in both;
+}
