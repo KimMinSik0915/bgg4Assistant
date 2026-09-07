@@ -3,8 +3,10 @@ import {Menu, Settings, User, X} from "lucide-react";
 import {Link, NavLink} from "react-router-dom";
 import {NavigationItems} from "../resources/DataSet/NavigationItems";
 import withNavigate from "../../utils/withNavigate";
+import packageJson from "../../../../package.json";
 
 const bgg4AssistantIcoPath = "/bgg4Assistant_ico.webp";
+const appVersion = packageJson.version;
 
 class HeaderLayout extends Component {
 
@@ -83,6 +85,9 @@ class HeaderLayout extends Component {
                         <img src={bgg4AssistantIcoPath} alt="logo" className="h-9 w-9 rounded-xl ring-1 ring-white/10 sm:h-10 sm:w-10"/>
                         <span className="bg-gradient-to-r from-cyan-300 to-indigo-300 bg-clip-text text-lg font-bold text-transparent sm:text-xl">
                             Bgg4Assistant
+                        </span>
+                        <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+                            v{appVersion}
                         </span>
                     </Link>
 
