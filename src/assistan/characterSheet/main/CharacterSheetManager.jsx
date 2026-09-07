@@ -1361,7 +1361,8 @@ class CharacterSheetManager extends Component {
               , mapState : multiplayerRoom.mapState
               , liveSync : true
               , canUploadMap : multiplayerRoom.isHost
-              , uploadImage : multiplayerRoom.uploadImage
+                // uploadImage는 일부러 안 넘긴다 - Firebase Storage(요금제 전환 필요) 없이, 솔로 모드와
+                // 같은 로컬 base64 압축을 그대로 써서 Realtime Database(무료)만으로 동작하게 하기 위함.
               , onUpdateMapState : multiplayerRoom.updateMapState
             }
             : {

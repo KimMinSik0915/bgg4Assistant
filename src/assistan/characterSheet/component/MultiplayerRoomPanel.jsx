@@ -8,10 +8,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     generateRoomCode, roomExists, createRoom, subscribeRoom, setRoomPlayer, removeRoomPlayer
-  , updateRoom, uploadRoomImage
+  , updateRoom
 } from '../service/firebaseClient';
 import { sendMultiplayerAction } from '../service/multiplayerService';
-import { compressImage } from './BattleMapPanel';
+// 🖼️ 전투지도/토큰 이미지는 Firebase Storage(요금제 전환이 필요할 수 있음) 대신, 솔로 모드와 똑같이
+// 로컬에서 압축한 base64를 그대로 Realtime Database(무료 Spark 플랜)에 저장한다 - 별도 설정/카드 등록 없이
+// 바로 동작하게 하기 위함. BattleMapPanel에 uploadImage prop을 넘기지 않으면 자동으로 이 방식이 된다.
 
 const PLAYER_ID_STORAGE = 'cs_mp_player_id';
 
@@ -122,18 +124,11 @@ const MultiplayerRoomPanel = ({
         updateRoom(roomId, { mapState : nextMapState });
     }, [roomId]);
 
-    // 🖼️ BattleMapPanel이 이미지를 "쓸 수 있는 형태"로 바꿀 때 호출하는 함수. 로컬에서 압축한 뒤
-    // Firebase Storage에 올리고, Realtime Database에는 짧은 다운로드 URL만 남긴다(base64를 그대로
-    // 넣으면 방에 있는 모든 사람에게 매번 무겁게 전송돼야 하기 때문).
-    const uploadRoomMapImage = useCallback(async (file, { kind = 'map', maxWidth = 1200, quality = 0.7 } = {}) => {
-        const { url : dataUrl, width, height } = await compressImage(file, maxWidth, quality);
-        const blob = await (await fetch(dataUrl)).blob();
-        const downloadUrl = await uploadRoomImage(roomId, kind, blob);
-        return { url : downloadUrl, width, height };
-    }, [roomId]);
-
     // 📡 방 접속 상태가 바뀔 때마다(입장/퇴장/다른 사람이 지도를 바꿔서 roomData가 갱신될 때마다)
     // 상위에 알려서, 메인 화면의 전투지도가 이 방의 공유 mapState를 그리도록 한다.
+    // uploadImage를 넘기지 않으므로 BattleMapPanel은 솔로 모드와 동일하게 로컬 base64 압축만 쓴다
+    // (Firebase Storage/Blaze 요금제 없이도 바로 동작하게 하기 위함 - 대신 이미지가 Realtime Database에
+    // base64로 그대로 저장되니, 아주 큰 지도를 자주 바꾸는 용도로는 안 맞을 수 있다).
     useEffect(() => {
         if (typeof onRoomStateChange !== 'function') return;
         if (!roomId) { onRoomStateChange(null); return; }
@@ -143,10 +138,9 @@ const MultiplayerRoomPanel = ({
           , isHost
           , mapState : roomData?.mapState || { tokens : [] }
           , updateMapState
-          , uploadImage : uploadRoomMapImage
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [roomId, playerId, isHost, roomData?.mapState, updateMapState, uploadRoomMapImage]);
+    }, [roomId, playerId, isHost, roomData?.mapState, updateMapState]);
 
     // 🚪 이 패널이 언마운트되면(예: "🎲 혼자 플레이"로 전환) 상위에 더는 방에 없다고 알린다
     useEffect(() => () => {

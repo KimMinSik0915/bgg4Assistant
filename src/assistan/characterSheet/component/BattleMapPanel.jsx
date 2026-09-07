@@ -17,7 +17,7 @@ const GRID_COLORS = {
 
 // 💡 이미지 압축 헬퍼 함수 (압축 후 실제 픽셀 크기도 함께 반환 - AI 지도 비전 조회 시 %좌표를
 // 픽셀로 환산하는 데 필요하다)
-// MultiplayerRoomPanel도 같은 압축 로직으로 만든 이미지를 Firebase Storage에 올리므로 export한다.
+// 다른 곳(예: 커스텀 uploadImage를 넘기는 협동 세션 확장)에서도 같은 압축 로직을 쓸 수 있게 export한다.
 export const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -52,8 +52,10 @@ const BattleMapPanel = ({
     // - liveSync: true면 mapState.mapUpdatedAt이 바뀔 때마다(=다른 참가자/방장이 지도를 바꿨을 때)
     //   내 화면도 그 내용으로 다시 맞춘다(단, 확대/이동은 각자 화면 개인 설정이라 제외).
     // - canUploadMap: false면 "➕ 지도" 업로드 버튼을 숨긴다(방장만 지도를 올릴 수 있게 하는 용도).
-    // - uploadImage: 있으면 로컬 base64 압축 대신 이 함수로 이미지를 올리고(Firebase Storage 등)
-    //   돌아온 URL을 사용한다 - Realtime Database에 큰 base64를 그대로 넣지 않기 위함.
+    // - uploadImage: 있으면 로컬 base64 압축 대신 이 함수로 이미지를 올리고 돌아온 URL을 쓴다.
+    //   현재 협동 세션(MultiplayerRoomPanel)은 이 prop을 넘기지 않아서 기본값(로컬 base64 압축)을
+    //   그대로 쓴다 - Firebase Storage(요금제 전환이 필요할 수 있음) 없이 Realtime Database만으로
+    //   동작하게 하기 위한 선택이며, 필요해지면 이 자리에 다시 연결하면 된다.
   , liveSync = false, canUploadMap = true, uploadImage
 }) => {
     const [maps, setMaps] = useState([]);
@@ -328,7 +330,7 @@ const BattleMapPanel = ({
         const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
 
-        // 협동 세션에서는 acquireImage가 Firebase Storage 업로드까지 하므로, 버킷 미설정/권한 문제로
+        // 이미지 압축/업로드는 파일이 깨져있거나(잘못된 형식) 협동 세션의 네트워크 문제 등으로
         // 실패할 수 있다 - 하나가 실패해도 Promise.all 전체가 죽어서 나머지 파일까지 조용히 사라지지
         // 않도록 파일별로 감싸고, 실패하면 사용자에게 원인을 알 수 있는 메시지를 보여준다.
         const readPromises = files.map(async (file) => {
@@ -359,11 +361,7 @@ const BattleMapPanel = ({
             notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
         }
         if (failedCount > 0) {
-            window.alert(
-                uploadImage
-                    ? `지도 업로드에 실패했어요 (${failedCount}개). 방장의 Firebase Storage가 활성화·설정되어 있는지 확인해주세요.`
-                    : `지도 업로드에 실패했어요 (${failedCount}개).`
-            );
+            window.alert(`지도 업로드에 실패했어요 (${failedCount}개). 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.`);
         }
         e.target.value = '';
     };
@@ -415,11 +413,7 @@ const BattleMapPanel = ({
             notifyParentState({ tokens: nextTokens });
         }
         if (failedCount > 0) {
-            window.alert(
-                uploadImage
-                    ? `토큰 업로드에 실패했어요 (${failedCount}개). 방장의 Firebase Storage가 활성화·설정되어 있는지 확인해주세요.`
-                    : `토큰 업로드에 실패했어요 (${failedCount}개).`
-            );
+            window.alert(`토큰 업로드에 실패했어요 (${failedCount}개). 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.`);
         }
         e.target.value = '';
     };
@@ -690,11 +684,7 @@ const BattleMapPanel = ({
             ({ url } = await acquireImage(file, 'token', 400, 0.8));
         } catch (err) {
             console.error('토큰 이미지 업로드 실패:', err);
-            window.alert(
-                uploadImage
-                    ? '토큰 이미지 업로드에 실패했어요. 방장의 Firebase Storage가 활성화·설정되어 있는지 확인해주세요.'
-                    : '토큰 이미지 업로드에 실패했어요.'
-            );
+            window.alert('토큰 이미지 업로드에 실패했어요. 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.');
             return;
         }
         const nextTokens = tokensRef.current.map(t => t.id === tokenId ? { ...t, url } : t);

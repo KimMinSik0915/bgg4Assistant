@@ -18,7 +18,9 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
     getDatabase, ref, set, update, onValue, off, get, runTransaction, push, serverTimestamp, remove
 } from 'firebase/database';
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+// 🖼️ 전투지도/토큰 이미지는 Firebase Storage를 쓰지 않는다 - Storage 버킷 생성은 Blaze(종량제)
+// 요금제 전환(결제 수단 등록)이 필요할 수 있어서, 카드 등록 없이 바로 쓸 수 있도록 압축한
+// base64 이미지를 Realtime Database(무료 Spark 플랜)에 그대로 저장하는 방식을 쓴다.
 
 const FIREBASE_CONFIG = {
     apiKey: "AIzaSyBe7Z889wUM6W4inCq70y0w1a1xPuA6-GI",
@@ -31,7 +33,6 @@ const FIREBASE_CONFIG = {
 };
 
 let dbInstance = null;
-let storageInstance = null;
 
 // 여러 컴포넌트에서 중복 initializeApp 호출해도 안전하게 싱글턴으로 반환
 export const getFirebaseDb = () => {
@@ -39,29 +40,6 @@ export const getFirebaseDb = () => {
     const app = getApps().length ? getApp() : initializeApp(FIREBASE_CONFIG);
     dbInstance = getDatabase(app);
     return dbInstance;
-};
-
-export const getFirebaseStorage = () => {
-    if (storageInstance) return storageInstance;
-    const app = getApps().length ? getApp() : initializeApp(FIREBASE_CONFIG);
-    storageInstance = getStorage(app);
-    return storageInstance;
-};
-
-/**
- * 방 전용 이미지(전투지도/토큰)를 Firebase Storage에 올리고 다운로드 URL을 반환한다.
- * Realtime Database에는 큰 base64 이미지를 그대로 넣지 않고 이 짧은 URL 문자열만 저장해서,
- * 방에 있는 모든 참가자에게 가볍고 빠르게 실시간 동기화되게 한다.
- * @param {string} roomId
- * @param {'map'|'token'} kind
- * @param {Blob} blob 압축된 이미지 blob
- * @returns {Promise<string>} 다운로드 URL
- */
-export const uploadRoomImage = async (roomId, kind, blob) => {
-    const path = `rooms/${roomId}/${kind}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
-    const fileRef = storageRef(getFirebaseStorage(), path);
-    await uploadBytes(fileRef, blob, { contentType : blob.type || 'image/jpeg' });
-    return getDownloadURL(fileRef);
 };
 
 // 방 코드 생성 (사람이 부르기 쉬운 6자리 대문자+숫자)
