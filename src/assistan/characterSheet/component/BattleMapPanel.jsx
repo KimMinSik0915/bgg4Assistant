@@ -17,7 +17,8 @@ const GRID_COLORS = {
 
 // 💡 이미지 압축 헬퍼 함수 (압축 후 실제 픽셀 크기도 함께 반환 - AI 지도 비전 조회 시 %좌표를
 // 픽셀로 환산하는 데 필요하다)
-const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
+// MultiplayerRoomPanel도 같은 압축 로직으로 만든 이미지를 Firebase Storage에 올리므로 export한다.
+export const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -45,7 +46,16 @@ const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
     });
 };
 
-const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
+const BattleMapPanel = ({
+    mapState, onUpdateMapState, isMobile
+    // 🤝 협동 세션 전용 props (솔로 모드에서는 전달되지 않으므로 전부 기본값으로 기존 동작 유지)
+    // - liveSync: true면 mapState.mapUpdatedAt이 바뀔 때마다(=다른 참가자/방장이 지도를 바꿨을 때)
+    //   내 화면도 그 내용으로 다시 맞춘다(단, 확대/이동은 각자 화면 개인 설정이라 제외).
+    // - canUploadMap: false면 "➕ 지도" 업로드 버튼을 숨긴다(방장만 지도를 올릴 수 있게 하는 용도).
+    // - uploadImage: 있으면 로컬 base64 압축 대신 이 함수로 이미지를 올리고(Firebase Storage 등)
+    //   돌아온 URL을 사용한다 - Realtime Database에 큰 base64를 그대로 넣지 않기 위함.
+  , liveSync = false, canUploadMap = true, uploadImage
+}) => {
     const [maps, setMaps] = useState([]);
     const [activeMapId, setActiveMapId] = useState(null);
     const [tokens, setTokens] = useState([]);
@@ -101,22 +111,39 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
     const zoomPersistTimerRef = useRef(null);
     const pinchRef = useRef({ active: false, lastDist: 0 });
 
-    // 💾 상위(sessionState) 전달 헬퍼
+    // 🔁 liveSync 모드에서 "방금 내가 직접 올린 갱신"과 "다른 참가자가 올린 갱신"을 구분하기 위한 표식.
+    // notifyParentState가 찍은 타임스탬프를 기억해뒀다가, 나중에 같은 값이 mapState로 되돌아오면
+    // (=내가 쓴 게 그대로 반영된 것뿐) 다시 처리하지 않는다.
+    const lastPushedUpdateAtRef = useRef(null);
+
+    // 💾 상위(sessionState 또는 Firebase 방 데이터) 전달 헬퍼
     const notifyParentState = (updated = {}) => {
-        if (typeof onUpdateMapState === 'function') {
-            onUpdateMapState({
-                maps: updated.maps ?? maps,
-                activeMapId: updated.activeMapId ?? activeMapId,
-                tokens: updated.tokens ?? tokensRef.current,
-                showGrid: updated.showGrid ?? showGrid,
-                gridSize: updated.gridSize ?? gridSize,
-                gridColorKey: updated.gridColorKey ?? gridColorKey,
-                mapScale: updated.mapScale ?? mapScale,
-                isMapLocked: updated.isMapLocked ?? isMapLocked,
-                panOffset: updated.panOffset ?? panOffset,
-                mapOffset: updated.mapOffset ?? mapOffset
-            });
+        if (typeof onUpdateMapState !== 'function') return;
+
+        const payload = {
+            maps: updated.maps ?? maps,
+            activeMapId: updated.activeMapId ?? activeMapId,
+            tokens: updated.tokens ?? tokensRef.current,
+            showGrid: updated.showGrid ?? showGrid,
+            gridSize: updated.gridSize ?? gridSize,
+            gridColorKey: updated.gridColorKey ?? gridColorKey,
+            isMapLocked: updated.isMapLocked ?? isMapLocked,
+            mapOffset: updated.mapOffset ?? mapOffset
+        };
+
+        if (liveSync) {
+            // 🤝 확대/화면 이동은 각자 보는 화면의 개인 설정이므로 공유 상태에는 싣지 않는다
+            // (그렇지 않으면 한 명이 확대할 때마다 다른 참가자들의 화면까지 같이 움직여버린다).
+            const stamp = Date.now();
+            lastPushedUpdateAtRef.current = stamp;
+            payload.mapUpdatedAt = stamp;
+        } else {
+            // 🎲 솔로 모드는 다음에 다시 열었을 때 보던 화면 그대로 복원해야 하므로 함께 저장한다
+            payload.mapScale = updated.mapScale ?? mapScale;
+            payload.panOffset = updated.panOffset ?? panOffset;
         }
+
+        onUpdateMapState(payload);
     };
 
     // 네이티브 휠 리스너(마운트 시 1회 등록)에서도 항상 최신 notifyParentState를 호출할 수 있도록 ref로 보관
@@ -155,6 +182,32 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
             tokensRef.current = mapState.tokens;
         }
     }, [mapState?.aiTokenUpdateAt, mapState?.tokens]);
+
+    // 🤝 [협동 세션 전용] 다른 참가자(방장의 지도 업로드 포함)가 mapState를 바꾸면 mapUpdatedAt이
+    // 갱신되어 여기로 전달된다. 그중 "내가 방금 직접 쓴 값"은 lastPushedUpdateAtRef와 같으므로
+    // 건너뛰고, 정말 남이 바꾼 값일 때만 지도/토큰/격자 설정을 내 화면에도 반영한다.
+    // (mapScale/panOffset은 각자 화면의 개인 설정이라 여기서 건드리지 않는다.)
+    useEffect(() => {
+        if (!liveSync) return;
+        const remoteAt = mapState?.mapUpdatedAt;
+        if (!remoteAt || remoteAt === lastPushedUpdateAtRef.current) return;
+        lastPushedUpdateAtRef.current = remoteAt;
+
+        if (mapState.maps) setMaps(mapState.maps);
+        if (mapState.activeMapId !== undefined) setActiveMapId(mapState.activeMapId);
+        if (mapState.tokens) {
+            setTokens(mapState.tokens);
+            tokensRef.current = mapState.tokens;
+        }
+        if (mapState.showGrid !== undefined) setShowGrid(mapState.showGrid);
+        if (mapState.gridSize !== undefined) setGridSize(mapState.gridSize);
+        if (mapState.gridColorKey) setGridColorKey(mapState.gridColorKey);
+        if (mapState.isMapLocked !== undefined) setIsMapLocked(mapState.isMapLocked);
+        if (mapState.mapOffset) setMapOffset(mapState.mapOffset);
+        // mapState 전체를 deps에 넣으면 부모가 매 렌더 새 객체를 내려줄 때마다 재실행되므로,
+        // "갱신됐는지"를 판단하는 mapUpdatedAt만 감시한다(위 로직도 그 값에만 반응하도록 짜여 있음).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [liveSync, mapState?.mapUpdatedAt]);
 
     const getPos = (e) => {
         if (e.touches && e.touches.length > 0) {
@@ -262,13 +315,21 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         notifyParentState({ mapOffset: nextOffset });
     };
 
-    // 🗺️ 지도 업로드
+    // 🖼️ 이미지 하나를 "쓸 수 있는 형태"로 만드는 공통 헬퍼.
+    // uploadImage prop이 있으면(협동 세션) 그 함수로 실제 업로드까지 맡기고, 없으면(솔로 모드)
+    // 기존처럼 로컬 base64로만 압축한다 - 호출부(handleMapUpload 등)는 어느 쪽인지 몰라도 된다.
+    const acquireImage = (file, kind, maxWidth, quality) =>
+        uploadImage ? uploadImage(file, { kind, maxWidth, quality }) : compressImage(file, maxWidth, quality);
+
+    // 🗺️ 지도 업로드 (협동 세션에서는 canUploadMap=false인 참가자에게 버튼 자체가 안 보이지만,
+    // 혹시 모를 상황을 대비해 함수 레벨에서도 한 번 더 막는다)
     const handleMapUpload = async (e) => {
+        if (!canUploadMap) { e.target.value = ''; return; }
         const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
 
         const readPromises = files.map(async (file) => {
-            const { url, width, height } = await compressImage(file, 1200, 0.7);
+            const { url, width, height } = await acquireImage(file, 'map', 1200, 0.7);
             return {
                 id: Date.now() + Math.random(),
                 name: file.name.replace(/\.[^/.]+$/, ""),
@@ -301,7 +362,7 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         const centerY = Math.max(0, (boardHeight / 2 - panOffset.y) / scaleFactor - gridSize / 2);
 
         const readPromises = files.map(async (file, idx) => {
-            const { url : compressedUrl } = await compressImage(file, 400, 0.8);
+            const { url : compressedUrl } = await acquireImage(file, 'token', 400, 0.8);
             const posX = centerX + (idx * 12);
             const posY = centerY + (idx * 12);
 
@@ -589,7 +650,7 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         pendingImageTokenIdRef.current = null;
         if (!file || tokenId === null) return;
 
-        const { url } = await compressImage(file, 400, 0.8);
+        const { url } = await acquireImage(file, 'token', 400, 0.8);
         const nextTokens = tokensRef.current.map(t => t.id === tokenId ? { ...t, url } : t);
         setTokens(nextTokens);
         tokensRef.current = nextTokens;
@@ -764,10 +825,20 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                             onChange={handlePendingImageChange}
                         />
 
-                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded bg-[var(--primary-color,#4a5568)] text-white hover:opacity-90">
-                            <span>➕ 지도</span>
-                            <input type="file" accept="image/*" multiple className="hidden" onChange={handleMapUpload} />
-                        </label>
+                        {canUploadMap ? (
+                            <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded bg-[var(--primary-color,#4a5568)] text-white hover:opacity-90">
+                                <span>➕ 지도</span>
+                                <input type="file" accept="image/*" multiple className="hidden" onChange={handleMapUpload} />
+                            </label>
+                        ) : (
+                            // 🤝 협동 세션에서 방장이 아니면 지도 배경은 올릴 수 없다(다른 조작은 그대로 가능)
+                            <span
+                                className="text-[0.75rem] font-bold px-2 py-1 rounded border border-slate-700 bg-slate-900/60 text-slate-500"
+                                title="지도 업로드는 방장만 할 수 있어요"
+                            >
+                                🔒 지도(방장 전용)
+                            </span>
+                        )}
 
                         <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded text-white hover:opacity-90" style={{ backgroundColor: 'var(--highlight,#3b82f6)' }}>
                             <span>🎭 토큰</span>

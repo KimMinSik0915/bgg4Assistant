@@ -14,6 +14,9 @@ const GmChatPanel = ({
                          , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
                          , onChangeScenarioUrl, onChangeMapUrl1, onChangeMapUrl2, onLoadScenario
                          , charData
+                         // 🗺️ 협동 세션의 방 접속 상태(입장/퇴장/방장 여부/공유 지도)를 그대로 상위로 전달한다 -
+                         // 메인 화면의 전투지도(BattleMapPanel)가 이 방의 공유 mapState를 그리도록 하기 위함.
+                         , onMultiplayerStateChange
                      }) => {
     const [sessionMode, setSessionMode] = useState('solo'); // 'solo' | 'multi'
 
@@ -50,6 +53,7 @@ const GmChatPanel = ({
                         mapUrl1={mapUrl1}
                         mapUrl2={mapUrl2}
                         charData={charData}
+                        onRoomStateChange={onMultiplayerStateChange}
                     />
                 </div>
             </div>

@@ -78,6 +78,18 @@ export const LOCATION_LOOKUP_SCHEMA = {
 
 // 세션 상태(캐릭터/맵/시나리오)에 따라 달라지지 않는, 항상 동일한 GM 행동 규칙.
 // buildGmSystemInstruction()가 이 텍스트 뒤에 캐릭터 요약/세션 상태/지도 좌표/시나리오 JSON을 이어붙인다.
+//
+// 🎭 AI가 전투지도 토큰을 생성하는 방법(token_spawns) - 아래 "## 2." 규칙에 자세히 적혀 있지만,
+// 전체 흐름은 이렇다:
+//  1) GM_RESPONSE_SCHEMA(구조화 응답)가 매 턴 응답에 token_spawns 필드를 강제하므로, 별도의
+//     추가 API 호출/비용 없이 한 번의 대화 응답 안에서 "새 토큰을 만들라"는 지시까지 함께 온다.
+//  2) 아래 규칙이 AI에게 "언제"(서술상 처음 등장하는 적/NPC일 때만, 이미 있는 토큰은 spawn 대신
+//     token_moves로 이동) "어떻게"(이름 중복 방지, 좌표는 반드시 격자 라벨) 채울지 지시한다.
+//  3) 응답이 오면 CharacterSheetManager.applyTokenSpawns / multiplayerService.applyTokenSpawns가
+//     "D3" 같은 격자 라벨을 gridCoords.parseGridLabel → gridIndexToPixel로 실제 픽셀 좌표로 바꾸고,
+//     hp/maxHp가 없으면 기본값 30을 채워 새 토큰 객체를 만든다.
+//  4) AI는 이미지를 만들지 않는다 - 새 토큰은 이미지 없이(url 없이) 지도에 나타나고, 사용자가
+//     BattleMapPanel에서 그 토큰을 클릭해 직접 이미지를 골라 넣으면 완성된다.
 export const GM_STATIC_RULES = [
     '너는 아래 업로드/연결된 자료를 기반으로 D&D 세션을 진행하는 GM이다.'
   , ''
@@ -108,6 +120,7 @@ export const GM_STATIC_RULES = [
   , '- 위 ①~③ 어디에서도 좌표를 찾을 수 없는, 완전히 처음 언급되는 장소라면 **좌표를 추측하지 말고** 그 이동은 이번 턴에 보류한다(해당 token_moves는 만들지 않는다). 대신 최상위 응답에 "location_lookup"에 그 장소 이름을 그대로 채우고, narrative에는 "잠시 지도를 확인해보겠다" 같은 자연스러운 짧은 서술만 담는다 - 좌표는 시스템이 지도 이미지를 직접 보고 알려줄 것이다.'
   , '- session_state.landmarks: 지도 표식(핀)에 없던 장소의 좌표가 다른 경로(예: location_lookup 결과, 대화 중 사용자가 직접 알려줌)로 새로 확정되면 { name, gridPos }로 기록한다. landmarks는 매 응답마다 지금까지 확정된 항목을 전부 포함해 다시 보내라(clues/quests와 동일한 누적 방식). 한 번 정한 장소의 좌표는 이후에도 바꾸지 말고 일관되게 유지한다.'
   , '- token_spawns: 서술상 새로운 적/몬스터/NPC가 전투지도 위에 처음 등장하면(매복, 문이 열리며 나타남, 증원 등) 채운다. 이미 아래 "전투지도 좌표" 목록에 있는 토큰은 다시 spawn하지 말고 token_moves로 이동시켜라. 이름은 기존 토큰과 겹치지 않게 구분한다(예: 고블린이 이미 있으면 "고블린 2"). hp/maxHp는 판단이 서면 채우고, 모르면 생략해도 된다(기본값 30으로 생성됨).'
+  , '- token_spawns[].at도 token_moves[].to와 똑같이 항상 격자 좌표(예: D3) 형식이어야 하며, "동굴", "제단" 같은 장소 이름을 그대로 넣지 않는다. 좌표를 모르는 장소에서 새로 등장하는 경우 위 token_moves와 같은 순서(① 지도 표식(핀) ② 아래 토큰 목록 ③ session_state.landmarks)로 좌표를 찾아 쓰고, 그래도 못 찾겠으면 **좌표를 추측해 만들어내지 말고** 이번 턴에는 그 token_spawns를 만들지 않는다 - 대신 location_lookup에 장소 이름을 채워 다음 턴에 정확한 좌표로 등장시킨다.'
   , '- token_spawns로 생성된 토큰은 이미지 없이 지도에 나타나며, 사용자가 지도에서 직접 그 토큰을 눌러 이미지를 넣는다 - AI가 이미지를 만들거나 지정할 필요는 없다.'
   , ''
   , '## 3. 진행 방식 규칙 - 자유 서술 및 주사위 판정 수칙'
