@@ -95,7 +95,7 @@ class SettingsScreen extends Component {
                             <img src={bgg4AssistantIcoPath} alt="logo" className="h-12 w-12 rounded-2xl ring-1 ring-white/10"/>
                             <div>
                                 <p className="text-base font-bold text-white">Bgg4Assistant</p>
-                                <p className="text-xs text-slate-400">보드게임 &amp; TRPG 올인원 어시스턴트</p>
+                                <p className="text-xs text-slate-400">보드게임 &amp; TRPG 올인원 어시스턴트 · v0.1.0</p>
                             </div>
                         </div>
                         <div className="mt-4 flex flex-wrap gap-1.5">

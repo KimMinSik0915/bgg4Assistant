@@ -1,7 +1,11 @@
 /**
  * @Author : 김민식
  * GmChatPanel : Gemini와 대화하며 캐릭터 시트를 관리하는 AI GM 채팅 카드
+ *  - 상단 "🤝 함께 플레이" 버튼으로 기존 솔로 모드와 Firebase 기반 2인 협동 모드를 전환한다.
  */
+import { useState } from 'react';
+import MultiplayerRoomPanel from './MultiplayerRoomPanel';
+
 const GmChatPanel = ({
                          apiKey, model, onChangeApiKey, onChangeModel, showSettings, onToggleSettings
                          , onExportLogs
@@ -9,13 +13,48 @@ const GmChatPanel = ({
                          , attachedFiles, onAttachFile, onRemoveAttachment
                          , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
                          , onChangeScenarioUrl, onChangeMapUrl1, onChangeMapUrl2, onLoadScenario
+                         , charData
                      }) => {
+    const [sessionMode, setSessionMode] = useState('solo'); // 'solo' | 'multi'
+
     const handleKeyDown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             onSend();
         }
     };
+
+    if (sessionMode === 'multi') {
+        return (
+            <div className="h-full flex flex-col min-h-0">
+                <div className="flex gap-1 rounded-xl p-1 mb-2 shrink-0" style={{ backgroundColor : 'var(--tag-bg, rgba(255,255,255,0.06))' }}>
+                    <button
+                        onClick={() => setSessionMode('solo')}
+                        className="flex-1 py-1.5 text-xs font-bold rounded-lg transition-all"
+                        style={{ color : 'var(--text-muted)' }}
+                    >
+                        🎲 혼자 플레이
+                    </button>
+                    <button
+                        className="flex-1 py-1.5 text-xs font-bold rounded-lg transition-all bg-[var(--card-bg)]"
+                        style={{ color : 'var(--accent-color)' }}
+                    >
+                        🤝 함께 플레이
+                    </button>
+                </div>
+                <div className="flex-1 min-h-0">
+                    <MultiplayerRoomPanel
+                        apiKey={apiKey}
+                        model={model}
+                        scenarioData={scenarioData}
+                        mapUrl1={mapUrl1}
+                        mapUrl2={mapUrl2}
+                        charData={charData}
+                    />
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="p-3.5 rounded-xl border bg-[var(--card-bg)] h-full flex flex-col min-h-0 overflow-hidden" style={{ borderColor : 'var(--border-color)' }}>
@@ -26,6 +65,14 @@ const GmChatPanel = ({
                 <span>🎲 AI GM 채팅 (Gemini)</span>
 
                 <div className="flex gap-1.5 items-center">
+                    <button
+                        onClick={() => setSessionMode('multi')}
+                        className="text-xs font-normal px-2 py-1 rounded hover:opacity-80 transition-opacity"
+                        style={{ color : 'var(--text-muted)', border : '1px solid var(--border-color)' }}
+                        title="다른 사람과 실시간으로 같은 세션 플레이하기"
+                    >
+                        🤝 함께 플레이
+                    </button>
                     <button
                         onClick={onExportLogs}
                         className="text-xs font-normal px-2 py-1 rounded hover:opacity-80 transition-opacity"
