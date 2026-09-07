@@ -13,7 +13,7 @@
  * dice3DEngine의 announceDiceResult(...)로 방송하면 이 위젯이 window 이벤트로 받아 같은 풀스크린
  * 결과 연출을 그대로 띄워준다 — props나 ref로 트리를 가로지를 필요가 없다.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DicesIcon, Trash2Icon, XIcon } from "lucide-react";
 import {
@@ -27,6 +27,12 @@ import {
   beginDiceCycle,
   endDiceCycle,
 } from "../service/dice3DEngine";
+import {
+  getDiceResultEffect,
+  DICE_RESULT_EFFECT_EVENT,
+  getDiceColor,
+  DICE_COLOR_EVENT,
+} from "../service/diceEffectSettings";
 import d4BadgeIcon from "../resource/diceIcons/d4.svg";
 import d6BadgeIcon from "../resource/diceIcons/d6.svg";
 import d8BadgeIcon from "../resource/diceIcons/d8.svg";
@@ -154,15 +160,191 @@ const resultTheme = (text) => {
   return undefined;
 };
 
-// 🎲 굴림이 끝나는 순간의 결과를 화면 전체에 크게 띄웠다가, 화면을 가로지르는 손과 함께
+// 🔥 "재가 되어 흩날리기" 연출 전용 - 정사각형 아이콘 영역을 정중앙 한 점에서 바깥 테두리로
+// 뻗어나가는 6조각(파이 모양)으로 쪼갠 clip-path. 원본 정사각형을 빈틈없이 덮는 삼각형들이라,
+// 조각마다 따로 날아가도 "하나의 아이콘이 깨져서 흩어진" 것처럼 보인다.
+const DICE_SHARD_CLIPS = [
+  "polygon(50% 50%, 0% 0%, 66.7% 0%)",
+  "polygon(50% 50%, 66.7% 0%, 100% 33.3%)",
+  "polygon(50% 50%, 100% 33.3%, 100% 100%)",
+  "polygon(50% 50%, 100% 100%, 33.3% 100%)",
+  "polygon(50% 50%, 33.3% 100%, 0% 66.7%)",
+  "polygon(50% 50%, 0% 66.7%, 0% 0%)",
+];
+
+// 🔥 주사위 아이콘 하나가 "파사삭" 조각나서 사방으로 튀며 사라지는 연출. 원본 아이콘은 아주
+// 짧게(0.35s) 잔상처럼 남았다 사라지고, 그 위로 같은 마스크 이미지를 6조각으로 쪼갠 파편들이
+// 저마다 다른 방향으로 회전하며 튀어나가 흩어진다 - 진짜로 깨져 나가는 느낌을 주는 핵심.
+const DiceShatter = ({ sides, value, size = 40, glow = false }) => {
+  const badgeIcon = DICE_BADGE_ICONS[sides];
+  const shards = useMemo(
+    () =>
+      DICE_SHARD_CLIPS.map((clip) => ({
+        clip,
+        dx: (Math.random() - 0.5) * size * 3.2,
+        dy: (Math.random() - 0.5) * size * 3.2 - size * 0.5, // 살짝 위로 튀는 편향
+        rot: (Math.random() - 0.5) * 320,
+        delay: Math.random() * 70,
+      })),
+    [size],
+  );
+
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <div className="absolute inset-0 cs-dice-shatter-fade">
+        <DiceShape sides={sides} value={value} size={size} glow={glow} />
+      </div>
+      {shards.map((s, i) => (
+        <div
+          key={i}
+          aria-hidden="true"
+          className="absolute inset-0 cs-dice-shard"
+          style={{
+            clipPath: s.clip,
+            WebkitClipPath: s.clip,
+            background: `linear-gradient(135deg, var(--accent-color, ${DICE_ACCENT}) 0%, var(--highlight, ${DICE_HIGHLIGHT}) 100%)`,
+            WebkitMaskImage: `url(${badgeIcon})`,
+            maskImage: `url(${badgeIcon})`,
+            WebkitMaskSize: "contain",
+            maskSize: "contain",
+            WebkitMaskRepeat: "no-repeat",
+            maskRepeat: "no-repeat",
+            WebkitMaskPosition: "center",
+            maskPosition: "center",
+            filter: glow ? "drop-shadow(0 4px 10px rgba(0,0,0,0.5))" : "none",
+            animationDelay: `${s.delay}ms`,
+            "--shard-dx": `${s.dx}px`,
+            "--shard-dy": `${s.dy}px`,
+            "--shard-rot": `${s.rot}deg`,
+          }}
+        />
+      ))}
+    </div>
+  );
+};
+
+// 🔥 화면 여기저기서 작은 잉걸불/재 입자가 위쪽으로 흩날리며 사라지는 파티클. 결과 카드 위의
+// 조각난 아이콘들 뒤로는 카드 근처에만(좁은 범위) 흩뿌리고, 실제로 화면에 널브러져 있던 물리
+// 주사위들 쪽(canvas-root 위)에는 화면 전체(넓은 범위)에 흩뿌려서 "저기 굴러다니던 진짜 주사위도
+// 같이 재가 되어 날아간다"는 느낌을 준다 - 그래서 범위를 xMin~xMax/yMin~yMax(%)로 받는다.
+// 매 굴림(마운트)마다 useMemo로 한 번만 랜덤 좌표를 뽑아 리렌더 중 위치가 튀지 않게 한다.
+const AshBurst = ({ count = 22, xMin = 20, xMax = 80, yMin = 28, yMax = 68 }) => {
+  const particles = useMemo(
+    () =>
+      Array.from({ length: count }, (_, i) => ({
+        id: i,
+        left: xMin + Math.random() * (xMax - xMin), // %
+        top: yMin + Math.random() * (yMax - yMin), // %
+        size: 4 + Math.random() * 7, // px
+        driftX: (Math.random() - 0.5) * 46, // vw
+        driftY: 22 + Math.random() * 34, // vh (위로 뜨는 거리)
+        delay: 150 + Math.random() * 300, // ms - 조각이 튄 다음에 뒤따라 피어오르도록 살짝 늦게 시작
+        ember: Math.random() < 0.55,
+      })),
+    [count, xMin, xMax, yMin, yMax],
+  );
+
+  return (
+    <div className="cs-ash-burst" aria-hidden="true">
+      {particles.map((p) => (
+        <span
+          key={p.id}
+          className="cs-ash-mote"
+          style={{
+            left: `${p.left}%`,
+            top: `${p.top}%`,
+            width: p.size,
+            height: p.size,
+            background: p.ember
+              ? "radial-gradient(circle, rgba(255,186,110,0.95) 0%, rgba(120,55,20,0.6) 55%, transparent 100%)"
+              : "radial-gradient(circle, rgba(200,196,190,0.9) 0%, rgba(70,66,62,0.55) 60%, transparent 100%)",
+            animationDelay: `${p.delay}ms`,
+            "--ash-mx": `${p.driftX}vw`,
+            "--ash-my": `-${p.driftY}vh`,
+          }}
+        />
+      ))}
+    </div>
+  );
+};
+
+// 🌀 "소용돌이로 빨려들기" 연출 전용 - 개별 주사위 아이콘은 화면 위 각자 다른 위치에 떠 있어서,
+// 그 아이콘 자신의 애니메이션만으로는 "여러 개가 한 점으로 빨려든다"는 진짜 소용돌이를 만들 수
+// 없다(각자 제자리에서만 움직이므로). 그래서 아이콘은 그냥 제자리에서 빙글빙글 돌며 줄어들게만
+// 하고("빨려 들어가는 대상"), 실제 "소용돌이"라는 인상은 VortexBurst(아래)가 만든다.
+const makeVortexVars = () => ({
+  "--vspin": `${(Math.random() < 0.5 ? -1 : 1) * (600 + Math.random() * 360)}deg`,
+});
+
+// 🌀 화면 정중앙 한 점으로 실제로 빨려들어가는 빛줄기들. 모든 빛줄기가 정확히 같은 기준점
+// (뷰포트 정중앙)에서 뻗어나가므로 - 개별 주사위와 달리 - 반지름이 0으로 줄어드는 애니메이션이
+// "사방에서 한 점으로 빨려든다"는 소용돌이를 실제로/수학적으로 만들어준다. 그래서 이 컴포넌트가
+// vortex 연출이 "그럴듯해 보이는지"를 좌우하는 핵심이다.
+const VORTEX_MOTE_COUNT = 18;
+const VortexBurst = () => {
+  const motes = useMemo(
+    () =>
+      Array.from({ length: VORTEX_MOTE_COUNT }, (_, i) => ({
+        id: i,
+        length: 16 + Math.random() * 26,
+        delay: Math.random() * 180,
+        angle: Math.random() * 360,
+        radius: 120 + Math.random() * 170,
+        spin: (Math.random() < 0.5 ? -1 : 1) * (480 + Math.random() * 360),
+      })),
+    [],
+  );
+
+  return (
+    <div className="cs-vortex-burst" aria-hidden="true">
+      {motes.map((m) => (
+        <span
+          key={m.id}
+          className="cs-vortex-mote"
+          style={{
+            width: m.length,
+            animationDelay: `${m.delay}ms`,
+            "--vb-a0": `${m.angle}deg`,
+            "--vb-r0": `${m.radius}px`,
+            "--vb-spin": `${m.spin}deg`,
+          }}
+        />
+      ))}
+    </div>
+  );
+};
+
+// 🎲 굴림이 끝나는 순간의 결과를 화면 전체에 크게 띄웠다가, 설정에서 고른 연출(effect)에 맞춰
 // (실제로 널브러져 있던 물리 주사위들과 나란히) 회수되어 사라지는 풀스크린 오버레이.
-const DiceResultOverlay = ({ overlay }) => {
+// effect: "hand"(기본, 손이 쓸어감) | "ash"(파사삭 부서져 재로 흩날림) | "vortex"(휘몰아치며 빨려듦) | "fade"(은은하게 페이드)
+const DiceResultOverlay = ({ overlay, effect = "hand", colorVars }) => {
   const { mode, phase, sides, value, results, total, text } = overlay;
   const exiting = phase === "exit";
+  const isAsh = effect === "ash";
+  const isVortex = effect === "vortex";
+  const isFade = effect === "fade";
+
+  // 결과 카드(합계/문구 포함) 전체가 퇴장할 때 어떤 애니메이션을 탈지 - 손 연출만 기존 클래스 그대로 유지.
+  const resultExitClass = isAsh
+    ? "cs-result-swipe-out"
+    : isVortex
+      ? "cs-result-vortex-out"
+      : isFade
+        ? "cs-result-fade-out"
+        : "cs-result-collected";
+
+  // 소용돌이 연출용 개별 주사위 회전 방향(시계/반시계)/반지름 - results 배열 레퍼런스가 살아있는
+  // 한(같은 굴림) 유지되어야 하므로 useMemo에 results를 키로 건다(enter→exit 전환 시 재계산되지 않게).
+  const groupVortexVars = useMemo(
+    () => (results || []).map(() => makeVortexVars()),
+    [results],
+  );
+  const singleVortexVars = useMemo(() => makeVortexVars(), [sides, value]);
 
   return (
     <div
       className={`fixed inset-0 z-[10001] flex items-center justify-center pointer-events-none ${exiting ? "cs-overlay-backdrop-out" : "cs-overlay-backdrop-in"}`}
+      style={colorVars}
     >
       <div
         className="absolute inset-0"
@@ -173,7 +355,7 @@ const DiceResultOverlay = ({ overlay }) => {
       />
 
       <div
-        className={`relative flex flex-col items-center gap-5 px-6 ${exiting ? "cs-result-collected" : "cs-result-enter"}`}
+        className={`relative flex flex-col items-center gap-5 px-6 ${exiting ? resultExitClass : "cs-result-enter"}`}
         style={resultTheme(text)}
       >
         {mode === "group" ? (
@@ -182,21 +364,32 @@ const DiceResultOverlay = ({ overlay }) => {
               🎲 {results.length}개 굴림
             </span>
             <div className="flex flex-wrap justify-center gap-3 max-w-[92vw]">
-              {results.map((r, i) => (
-                <div
-                  key={i}
-                  className="cs-result-chip-pop"
-                  style={{ animationDelay: exiting ? "0ms" : `${i * 70}ms` }}
-                >
-                  <DiceShape
-                    sides={r.sides}
-                    value={r.value}
-                    size={68}
-                    glow
-                    gradientId={`cs-ov-chip-${i}`}
-                  />
-                </div>
-              ))}
+              {results.map((r, i) => {
+                const vortexNow = exiting && isVortex;
+                const v = groupVortexVars[i];
+                return (
+                  <div
+                    key={i}
+                    className={vortexNow ? "cs-dice-vortex-spin-out" : "cs-result-chip-pop"}
+                    style={{
+                      animationDelay: exiting ? `${i * 45}ms` : `${i * 70}ms`,
+                      ...(vortexNow ? v : null),
+                    }}
+                  >
+                    {exiting && isAsh ? (
+                      <DiceShatter sides={r.sides} value={r.value} size={68} glow />
+                    ) : (
+                      <DiceShape
+                        sides={r.sides}
+                        value={r.value}
+                        size={68}
+                        glow
+                        gradientId={`cs-ov-chip-${i}`}
+                      />
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <div
               className="text-6xl font-black text-white sm:text-7xl"
@@ -208,13 +401,22 @@ const DiceResultOverlay = ({ overlay }) => {
             </div>
           </>
         ) : (
-          <DiceShape
-            sides={sides}
-            value={value}
-            size={220}
-            glow
-            gradientId="cs-ov-single"
-          />
+          <div
+            className={exiting && isVortex ? "cs-dice-vortex-spin-out" : undefined}
+            style={exiting && isVortex ? singleVortexVars : undefined}
+          >
+            {exiting && isAsh ? (
+              <DiceShatter sides={sides} value={value} size={220} glow />
+            ) : (
+              <DiceShape
+                sides={sides}
+                value={value}
+                size={220}
+                glow
+                gradientId="cs-ov-single"
+              />
+            )}
+          </div>
         )}
 
         {text && (
@@ -231,12 +433,20 @@ const DiceResultOverlay = ({ overlay }) => {
         )}
       </div>
 
-      {exiting && (
+      {exiting && effect === "hand" && (
         <div className="cs-hand-collect" aria-hidden="true">
           <span className="cs-hand-open">🖐️</span>
           <span className="cs-hand-fist">✊</span>
         </div>
       )}
+      {exiting && isAsh && <AshBurst count={22} xMin={20} xMax={80} yMin={28} yMax={68} />}
+      {exiting && isVortex && (
+        <>
+          <div className="cs-vortex-ring" aria-hidden="true" />
+          <VortexBurst />
+        </>
+      )}
+      {/* "fade"는 별도 장식 없이 결과/주사위 자체만 조용히 사라진다 */}
     </div>
   );
 };
@@ -263,6 +473,28 @@ const DicePanel = () => {
     return () => window.removeEventListener(DICE_ROLLING_EVENT, onRollingChange);
   }, []);
   const [overlay, setOverlay] = useState(null); // { mode, phase, sides, value, results, total, text }
+  // 🖐️/🔥/🌀/✨ 결과가 회수되어 사라지는 연출 - 설정 화면(SettingsScreen)에서 바꾸며,
+  // 이미 이 위젯이 떠 있는 동안 바뀌어도 DICE_RESULT_EFFECT_EVENT를 받아 다음 굴림부터 바로 반영된다.
+  const [resultEffect, setResultEffect] = useState(getDiceResultEffect);
+  useEffect(() => {
+    const onEffectChange = (e) => setResultEffect(e.detail?.effect || "hand");
+    window.addEventListener(DICE_RESULT_EFFECT_EVENT, onEffectChange);
+    return () =>
+      window.removeEventListener(DICE_RESULT_EFFECT_EVENT, onEffectChange);
+  }, []);
+  // 🎨 주사위 색상(2D 아이콘 + 실제 3D 물리 주사위 모두) - 마찬가지로 설정 화면에서 바꾸면
+  // DICE_COLOR_EVENT로 즉시 반영된다. DiceShape는 --accent-color/--highlight CSS 변수를 읽으므로
+  // 여기서는 그 변수를 트레이/오버레이 루트에 꽂아주기만 하면 된다.
+  const [diceColor, setDiceColorState] = useState(getDiceColor);
+  useEffect(() => {
+    const onColorChange = (e) => e.detail && setDiceColorState(e.detail);
+    window.addEventListener(DICE_COLOR_EVENT, onColorChange);
+    return () => window.removeEventListener(DICE_COLOR_EVENT, onColorChange);
+  }, []);
+  const diceColorVars = {
+    "--accent-color": diceColor.accent,
+    "--highlight": diceColor.highlight,
+  };
   const [fabPosition, setFabPosition] = useState(loadFabPosition); // { top, left } - 드래그로 옮긴 FAB 위치
   const timersRef = useRef([]);
 
@@ -491,7 +723,8 @@ const DicePanel = () => {
   const trayOpenUp = fabPosition.top + FAB_SIZE / 2 > window.innerHeight / 2;
   const trayAlignRight = fabPosition.left + FAB_SIZE / 2 > window.innerWidth / 2;
   const trayStyle = {
-    borderColor: DICE_ACCENT,
+    ...diceColorVars, // 트레이 안의 DiceShape들도 같은 커스텀 색을 쓰도록 CSS 변수를 여기서 꽂아준다
+    borderColor: diceColor.accent,
     background: "rgba(15,17,26,0.92)", // 이미 거의 불투명이라 backdrop-filter는 안 써도 티가 안 나서 뺐다(iOS 부담만 줄어듦)
     boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
     ...(trayOpenUp
@@ -510,19 +743,61 @@ const DicePanel = () => {
       : "origin-top-left";
   const trayHiddenTranslateClass = trayOpenUp ? "translate-y-3" : "-translate-y-3";
 
+  // 🎲→💨 실제로 화면을 굴러다니다 착지한 "진짜" 물리 주사위(WebGL 캔버스) 쪽에도 결과 카드와
+  // 같은 순간(phase === "exit")에 같은 연출을 입힌다. clearDiceBox()가 실제로 캔버스를 비우는
+  // CLEAR_AT_MS 시점보다 애니메이션이 살짝 길어서, "뚝 끊기듯 사라진다"가 아니라 "저기 굴러다니던
+  // 주사위가 진짜로 삭아 없어진다"는 착시가 만들어진다. "hand"는 기존 손 연출 자체가 이미 그
+  // 순간을 가려주므로 별도 처리가 필요 없다.
+  const physicalExiting = overlay?.phase === "exit";
+  const physicalEffectClass = physicalExiting
+    ? resultEffect === "ash"
+      ? "cs-physical-dice-crumble"
+      : resultEffect === "vortex"
+        ? "cs-physical-dice-vortex"
+        : resultEffect === "fade"
+          ? "cs-physical-dice-fade"
+          : ""
+    : "";
+
   return (
     <>
       {createPortal(
         <div
           id="cs-dice-box-canvas-root"
-          className="pointer-events-none fixed inset-0 z-[10000]"
+          className={`pointer-events-none fixed inset-0 z-[10000] ${physicalEffectClass}`}
           aria-hidden="true"
         />,
         document.body,
       )}
 
+      {/* 🔥/🌀 진짜 물리 주사위들 위에 겹치는 파티클 - canvas-root와 같은 z축에 있되 이 포탈 호출이
+          코드상 더 뒤에 있어서(= DOM에서 더 나중에 붙어서) 캔버스 위에 그려진다. */}
+      {physicalExiting &&
+        resultEffect === "ash" &&
+        createPortal(
+          <div className="pointer-events-none fixed inset-0 z-[10000]" aria-hidden="true">
+            <AshBurst count={40} xMin={4} xMax={96} yMin={6} yMax={94} />
+          </div>,
+          document.body,
+        )}
+      {physicalExiting &&
+        resultEffect === "vortex" &&
+        createPortal(
+          <div className="pointer-events-none fixed inset-0 z-[10000]" aria-hidden="true">
+            <VortexBurst />
+          </div>,
+          document.body,
+        )}
+
       {overlay &&
-        createPortal(<DiceResultOverlay overlay={overlay} />, document.body)}
+        createPortal(
+          <DiceResultOverlay
+            overlay={overlay}
+            effect={resultEffect}
+            colorVars={diceColorVars}
+          />,
+          document.body,
+        )}
 
       {/* 트레이가 펼쳐졌을 때 바깥을 탭하면 접히는 투명 백드롭 */}
       {expanded && (
@@ -567,7 +842,7 @@ const DicePanel = () => {
                     ? "scale-105 bg-cyan-400/15"
                     : "border-white/15 bg-white/5 opacity-80 hover:opacity-100"
                 }`}
-                style={count > 0 ? { borderColor: DICE_ACCENT } : undefined}
+                style={count > 0 ? { borderColor: diceColor.accent } : undefined}
               >
                 <DiceShape
                   sides={sides}
@@ -578,7 +853,7 @@ const DicePanel = () => {
                 <span
                   className="text-[0.65rem] font-bold"
                   style={{
-                    color: count > 0 ? DICE_ACCENT : "rgba(255,255,255,0.6)",
+                    color: count > 0 ? diceColor.accent : "rgba(255,255,255,0.6)",
                   }}
                 >
                   d{sides}
@@ -590,7 +865,7 @@ const DicePanel = () => {
                       decrementDie(sides);
                     }}
                     className="absolute -top-1.5 -right-1.5 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 text-[0.65rem] font-bold text-white shadow-md active:scale-90"
-                    style={{ background: DICE_HIGHLIGHT }}
+                    style={{ background: diceColor.highlight }}
                     title="1개 빼기"
                   >
                     {count}
