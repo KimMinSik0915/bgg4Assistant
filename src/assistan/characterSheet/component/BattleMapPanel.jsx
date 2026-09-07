@@ -328,24 +328,43 @@ const BattleMapPanel = ({
         const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
 
+        // 협동 세션에서는 acquireImage가 Firebase Storage 업로드까지 하므로, 버킷 미설정/권한 문제로
+        // 실패할 수 있다 - 하나가 실패해도 Promise.all 전체가 죽어서 나머지 파일까지 조용히 사라지지
+        // 않도록 파일별로 감싸고, 실패하면 사용자에게 원인을 알 수 있는 메시지를 보여준다.
         const readPromises = files.map(async (file) => {
-            const { url, width, height } = await acquireImage(file, 'map', 1200, 0.7);
-            return {
-                id: Date.now() + Math.random(),
-                name: file.name.replace(/\.[^/.]+$/, ""),
-                url,
-                width,  // AI 지도 비전 조회 시 %좌표를 픽셀로 환산하는 데 사용
-                height
-            };
+            try {
+                const { url, width, height } = await acquireImage(file, 'map', 1200, 0.7);
+                return {
+                    id: Date.now() + Math.random(),
+                    name: file.name.replace(/\.[^/.]+$/, ""),
+                    url,
+                    width,  // AI 지도 비전 조회 시 %좌표를 픽셀로 환산하는 데 사용
+                    height
+                };
+            } catch (err) {
+                console.error('지도 이미지 업로드 실패:', err);
+                return null;
+            }
         });
 
-        const newMaps = await Promise.all(readPromises);
-        const nextMaps = [...maps, ...newMaps];
-        const nextActiveId = !activeMapId && newMaps.length > 0 ? newMaps[0].id : activeMapId;
+        const uploaded = await Promise.all(readPromises);
+        const newMaps = uploaded.filter(Boolean);
+        const failedCount = uploaded.length - newMaps.length;
 
-        setMaps(nextMaps);
-        if (!activeMapId && newMaps.length > 0) setActiveMapId(nextActiveId);
-        notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
+        if (newMaps.length > 0) {
+            const nextMaps = [...maps, ...newMaps];
+            const nextActiveId = !activeMapId ? newMaps[0].id : activeMapId;
+            setMaps(nextMaps);
+            if (!activeMapId) setActiveMapId(nextActiveId);
+            notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
+        }
+        if (failedCount > 0) {
+            window.alert(
+                uploadImage
+                    ? `지도 업로드에 실패했어요 (${failedCount}개). 방장의 Firebase Storage가 활성화·설정되어 있는지 확인해주세요.`
+                    : `지도 업로드에 실패했어요 (${failedCount}개).`
+            );
+        }
         e.target.value = '';
     };
 
@@ -362,30 +381,46 @@ const BattleMapPanel = ({
         const centerY = Math.max(0, (boardHeight / 2 - panOffset.y) / scaleFactor - gridSize / 2);
 
         const readPromises = files.map(async (file, idx) => {
-            const { url : compressedUrl } = await acquireImage(file, 'token', 400, 0.8);
-            const posX = centerX + (idx * 12);
-            const posY = centerY + (idx * 12);
+            try {
+                const { url : compressedUrl } = await acquireImage(file, 'token', 400, 0.8);
+                const posX = centerX + (idx * 12);
+                const posY = centerY + (idx * 12);
 
-            return {
-                id: Date.now() + Math.random(),
-                name: file.name.replace(/\.[^/.]+$/, ""),
-                url: compressedUrl,
-                x: posX,
-                y: posY,
-                gridPos: calculateGridPos(posX, posY, gridSize),
-                size: gridSize,
-                hp: 30,
-                maxHp: 30
-            };
+                return {
+                    id: Date.now() + Math.random(),
+                    name: file.name.replace(/\.[^/.]+$/, ""),
+                    url: compressedUrl,
+                    x: posX,
+                    y: posY,
+                    gridPos: calculateGridPos(posX, posY, gridSize),
+                    size: gridSize,
+                    hp: 30,
+                    maxHp: 30
+                };
+            } catch (err) {
+                console.error('토큰 이미지 업로드 실패:', err);
+                return null;
+            }
         });
 
-        const newTokens = await Promise.all(readPromises);
-        const nextTokens = [...tokens, ...newTokens];
+        const uploaded = await Promise.all(readPromises);
+        const newTokens = uploaded.filter(Boolean);
+        const failedCount = uploaded.length - newTokens.length;
 
-        setTokens(nextTokens);
-        tokensRef.current = nextTokens;
-        if (newTokens.length > 0) setSelectedTokenId(newTokens[newTokens.length - 1].id);
-        notifyParentState({ tokens: nextTokens });
+        if (newTokens.length > 0) {
+            const nextTokens = [...tokens, ...newTokens];
+            setTokens(nextTokens);
+            tokensRef.current = nextTokens;
+            setSelectedTokenId(newTokens[newTokens.length - 1].id);
+            notifyParentState({ tokens: nextTokens });
+        }
+        if (failedCount > 0) {
+            window.alert(
+                uploadImage
+                    ? `토큰 업로드에 실패했어요 (${failedCount}개). 방장의 Firebase Storage가 활성화·설정되어 있는지 확인해주세요.`
+                    : `토큰 업로드에 실패했어요 (${failedCount}개).`
+            );
+        }
         e.target.value = '';
     };
 
@@ -650,7 +685,18 @@ const BattleMapPanel = ({
         pendingImageTokenIdRef.current = null;
         if (!file || tokenId === null) return;
 
-        const { url } = await acquireImage(file, 'token', 400, 0.8);
+        let url;
+        try {
+            ({ url } = await acquireImage(file, 'token', 400, 0.8));
+        } catch (err) {
+            console.error('토큰 이미지 업로드 실패:', err);
+            window.alert(
+                uploadImage
+                    ? '토큰 이미지 업로드에 실패했어요. 방장의 Firebase Storage가 활성화·설정되어 있는지 확인해주세요.'
+                    : '토큰 이미지 업로드에 실패했어요.'
+            );
+            return;
+        }
         const nextTokens = tokensRef.current.map(t => t.id === tokenId ? { ...t, url } : t);
         setTokens(nextTokens);
         tokensRef.current = nextTokens;
