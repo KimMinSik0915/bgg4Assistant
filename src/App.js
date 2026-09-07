@@ -1,6 +1,6 @@
 import './App.css';
 import { lazy, Suspense } from 'react';
-import {BrowserRouter, Route, Routes} from "react-router-dom";
+import {HashRouter, Route, Routes} from "react-router-dom";
 import Layout from "./assistan/layout/main/Layout";
 import HomeScreen from "./assistan/homeScreen/main/homeScreen";
 
@@ -23,7 +23,7 @@ const RouteLoading = () => (
 
 function App() {
     return (
-        <BrowserRouter>
+        <HashRouter>
             <Layout>
                 <Suspense fallback={<RouteLoading/>}>
                     <Routes>
@@ -35,7 +35,7 @@ function App() {
                     </Routes>
                 </Suspense>
             </Layout>
-        </BrowserRouter>
+        </HashRouter>
     );
 }
 
