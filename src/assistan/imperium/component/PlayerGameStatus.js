@@ -26,11 +26,11 @@ const PlayerGameState = ({ player, index, onUpdateResources, onSettingsAction })
         <div className={`mb-4 rounded-2xl border p-4 shadow-lg transition-colors ${
             player.hasWonCondition
                 ? 'border-amber-400/40 bg-amber-400/[0.06]'
-                : 'border-white/10 bg-slate-900/60'
+                : 'border-white/10 bg-[#170a2e]/60'
         }`}>
             <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${player.isAI ? 'bg-indigo-400/15 text-indigo-300' : 'bg-cyan-400/15 text-cyan-300'}`}>
+                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${player.isAI ? 'bg-violet-400/15 text-violet-300' : 'bg-purple-400/15 text-purple-300'}`}>
                         {player.isAI ? <Bot size={18}/> : <User size={18}/>}
                     </div>
                     <div className="min-w-0">

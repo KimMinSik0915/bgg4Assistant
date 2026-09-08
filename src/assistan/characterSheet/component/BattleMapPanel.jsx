@@ -876,7 +876,7 @@ const BattleMapPanel = ({
                             </span>
                         )}
 
-                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded text-white hover:opacity-90" style={{ backgroundColor: 'var(--highlight,#3b82f6)' }}>
+                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded text-white hover:opacity-90" style={{ backgroundColor: 'var(--highlight,#8b5cf6)' }}>
                             <span>🎭 토큰</span>
                             <input type="file" accept="image/*" multiple className="hidden" onChange={handleTokenUpload} />
                         </label>
@@ -998,10 +998,10 @@ const BattleMapPanel = ({
 
                                 {/* 토큰 이미지 / 핀(장소 표식) 마커 / AI가 만든 이미지 없는 토큰 플레이스홀더 */}
                                 {token.isPin ? (
-                                    <div className={`w-full h-full rounded-full flex items-center justify-center bg-sky-950/90 text-[0.9em] ${
+                                    <div className={`w-full h-full rounded-full flex items-center justify-center bg-violet-950/90 text-[0.9em] ${
                                         isSelected
                                             ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
-                                            : 'border-2 border-sky-400/80 hover:border-sky-300'
+                                            : 'border-2 border-violet-400/80 hover:border-violet-300'
                                     }`}>
                                         📍
                                     </div>

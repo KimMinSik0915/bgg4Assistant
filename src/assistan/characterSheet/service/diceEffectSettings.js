@@ -82,7 +82,7 @@ export const lightenHex = (hex, amount = 0.35) => {
 };
 
 export const DICE_COLOR_PRESETS = [
-  { id: "cyan", label: "시안 (기본)", accent: "#22d3ee", highlight: "#818cf8" },
+  { id: "violet", label: "바이올렛 (기본)", accent: "#8b5cf6", highlight: "#c4b5fd" },
   { id: "pink", label: "핑크", accent: "#ec4899", highlight: "#f9a8d4" },
   { id: "purple", label: "퍼플", accent: "#a855f7", highlight: "#e9d5ff" },
   { id: "emerald", label: "에메랄드", accent: "#10b981", highlight: "#6ee7b7" },
