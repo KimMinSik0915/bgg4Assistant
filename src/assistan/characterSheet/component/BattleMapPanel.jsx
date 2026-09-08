@@ -366,6 +366,44 @@ const BattleMapPanel = ({
         e.target.value = '';
     };
 
+    // 🗑️ 지도 삭제 - 여러 장 올려둔 지도 중 하나를 목록에서 제거한다.
+    // 지금 보고 있던(활성) 지도를 지웠다면 남은 지도 중 첫 번째로 자동 전환하고, 하나도 안 남으면 "등록된 지도 없음" 상태로 되돌린다.
+    const removeMap = (id) => {
+        const nextMaps = maps.filter(m => m.id !== id);
+        const nextActiveId = activeMapId === id
+            ? (nextMaps.length > 0 ? nextMaps[0].id : null)
+            : activeMapId;
+        setMaps(nextMaps);
+        setActiveMapId(nextActiveId);
+        notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
+    };
+
+    // 🔀 활성 지도 전환
+    const switchActiveMap = (id) => {
+        if (id === activeMapId) return;
+        setActiveMapId(id);
+        notifyParentState({ activeMapId: id });
+    };
+
+    // ✏️ 지도 이름 수정
+    const renameMap = (id, currentName) => {
+        const name = window.prompt('지도 이름을 입력하세요.', currentName || '');
+        if (!name || !name.trim() || name.trim() === currentName) return;
+        const nextMaps = maps.map(m => m.id === id ? { ...m, name: name.trim() } : m);
+        setMaps(nextMaps);
+        notifyParentState({ maps: nextMaps });
+    };
+
+    // ✏️ 토큰/핀 이름 수정 - AI GM은 이 이름으로 위치를 참조하므로, 바꾸면 이후 대화부터 새 이름으로 인식된다
+    const renameToken = (id, currentName) => {
+        const name = window.prompt('이름을 입력하세요.', currentName || '');
+        if (!name || !name.trim() || name.trim() === currentName) return;
+        const nextTokens = tokens.map(t => t.id === id ? { ...t, name: name.trim() } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
+    };
+
     // 🎭 토큰 업로드
     const handleTokenUpload = async (e) => {
         const files = Array.from(e.target.files || []);
@@ -902,6 +940,52 @@ const BattleMapPanel = ({
                 )}
             </div>
 
+            {/* 🗂️ 지도 목록(탭) - 여러 장을 올려둔 경우 여기서 전환/이름수정/삭제한다. 설정 줄과 달리 플레이 중에도 자주 쓰이므로 모바일 접힘과 무관하게 항상 보여준다. */}
+            {maps.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 shrink-0">
+                    {maps.map((m) => (
+                        <div
+                            key={m.id}
+                            onClick={() => switchActiveMap(m.id)}
+                            className={`flex items-center gap-1 shrink-0 pl-2 pr-1 py-1 rounded-lg border text-[0.7rem] font-bold cursor-pointer transition-all ${
+                                activeMapId === m.id
+                                    ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                            }`}
+                            title={m.name}
+                        >
+                            <span className="truncate max-w-[90px]">🗺️ {m.name || '지도'}</span>
+                            {canUploadMap && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            renameMap(m.id, m.name);
+                                        }}
+                                        className="text-[0.68rem] px-1 rounded hover:bg-black/20 leading-none"
+                                        title="지도 이름 수정"
+                                    >
+                                        ✏️
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (window.confirm(`"${m.name}" 지도를 삭제할까요?`)) removeMap(m.id);
+                                        }}
+                                        className="text-[0.68rem] px-1 rounded hover:bg-black/20 leading-none"
+                                        title="지도 삭제"
+                                    >
+                                        ✕
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+
             {/* 🎮 메인 전투 지도 뷰포트 */}
             <div
                 ref={boardRef}
@@ -916,16 +1000,15 @@ const BattleMapPanel = ({
                 }`}
                 style={{ borderColor: (isPinMode || isAlignMode) ? '#f59e0b' : 'var(--border-color)' }}
             >
-                {/* 🔍 Pan & Zoom 뷰포트 */}
+                {/* 🖼️ 1. 배경 지도 - 확대/축소·이동은 이 레이어의 transform으로만 처리한다 */}
                 <div
-                    className="relative select-none w-full h-full"
+                    className="absolute inset-0 select-none"
                     style={{
                         transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapScale / 100})`,
                         transformOrigin: '0 0',
                         transition: (isPanning || pinchRef.current.active) ? 'none' : 'transform 0.1s ease-out'
                     }}
                 >
-                    {/* 🖼️ 1. 배경 지도 */}
                     {activeMap ? (
                         <div
                             className="absolute left-0 top-0 transition-none pointer-events-none"
@@ -939,23 +1022,38 @@ const BattleMapPanel = ({
                             <p className="text-[0.7rem]">상단 [➕ 지도]를 눌러 이미지 파일을 업로드해 주세요.</p>
                         </div>
                     )}
+                </div>
 
-                    {/* ▦ 2. 격자 오버레이 */}
-                    {showGrid && (
-                        <div
-                            className="absolute inset-0 pointer-events-none z-10 min-w-[3000px] min-h-[3000px]"
-                            style={{
-                                backgroundImage: `
-                                    linear-gradient(to right, ${currentGridStyle.line} 1.5px, transparent 1.5px),
-                                    linear-gradient(to bottom, ${currentGridStyle.line} 1.5px, transparent 1.5px)
-                                `,
-                                backgroundSize: `${gridSize}px ${gridSize}px`,
-                                filter: `drop-shadow(0px 0px 1px ${currentGridStyle.shadow})`
-                            }}
-                        />
-                    )}
+                {/* ▦ 2. 격자 오버레이 - map/token 레이어처럼 transform:scale()로 함께 축소시키면, 브라우저가 래스터화된
+                    1.5px 격자선을 축소 렌더링(민입/앨리어싱)하는 과정에서 표본 지점이 선과 선 사이 투명한 틈에 걸려
+                    격자 전체가 통째로 사라지는 문제가 있다(지도를 일정 크기 이하로 축소했을 때 보고된 현상).
+                    그래서 격자만 transform 밖으로 빼고, 같은 pan/zoom 결과를 backgroundPosition/backgroundSize로 직접
+                    계산해 항상 실제 화면 픽셀 두께(1.5px)로 그린다 - 배율과 무관하게 선이 얇아질 뿐 사라지지는 않는다. */}
+                {showGrid && (
+                    <div
+                        className="absolute inset-0 pointer-events-none z-10"
+                        style={{
+                            backgroundImage: `
+                                linear-gradient(to right, ${currentGridStyle.line} 1.5px, transparent 1.5px),
+                                linear-gradient(to bottom, ${currentGridStyle.line} 1.5px, transparent 1.5px)
+                            `,
+                            backgroundSize: `${gridSize * (mapScale / 100)}px ${gridSize * (mapScale / 100)}px`,
+                            backgroundPosition: `${panOffset.x}px ${panOffset.y}px`,
+                            filter: `drop-shadow(0px 0px 1px ${currentGridStyle.shadow})`,
+                            transition: (isPanning || pinchRef.current.active) ? 'none' : 'background-position 0.1s ease-out, background-size 0.1s ease-out'
+                        }}
+                    />
+                )}
 
-                    {/* 🎭 3. 토큰 레이어 */}
+                {/* 🎭 3. 토큰 레이어 - 지도와 같은 transform을 적용해 함께 움직이되, 격자보다 나중(위)에 그려 항상 격자 위에 보이게 한다 */}
+                <div
+                    className="absolute inset-0 select-none z-20"
+                    style={{
+                        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapScale / 100})`,
+                        transformOrigin: '0 0',
+                        transition: (isPanning || pinchRef.current.active) ? 'none' : 'transform 0.1s ease-out'
+                    }}
+                >
                     {tokens.map((token) => {
                         const isSelected = selectedTokenId === token.id;
                         const size = token.size ?? gridSize;
@@ -1047,6 +1145,13 @@ const BattleMapPanel = ({
                         <div className="flex items-center justify-between border-b border-slate-700/80 pb-1.5">
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-bold text-amber-300">{selectedToken.name}</span>
+                                <button
+                                    onClick={() => renameToken(selectedToken.id, selectedToken.name)}
+                                    className="text-[0.68rem] px-1 rounded hover:bg-white/10 leading-none"
+                                    title="이름 수정"
+                                >
+                                    ✏️
+                                </button>
                                 <span className="text-[0.68rem] bg-amber-950 text-amber-400 px-1.5 py-0.5 rounded border border-amber-800 font-mono font-bold">
                                     좌표: {selectedToken.gridPos || 'A1'}
                                 </span>
