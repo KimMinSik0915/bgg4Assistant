@@ -293,19 +293,51 @@ const BattleMapPanel = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // 📐 격자 크기 조절
-    const handleGridSizeChange = (delta) => {
-        const newSize = Math.max(20, Math.min(200, gridSize + delta));
+    // 📐 격자 크기 조절 - 슬라이더 드래그/마우스 휠 둘 다 이 함수 하나로 처리한다.
+    // (버튼을 여러 번 클릭하는 대신 슬라이더를 드래그하거나, 그 위에서 휠을 굴려 바꿀 수 있게 한 것)
+    // 네이티브 wheel 리스너(마운트 시 1회 등록)에서도 항상 최신 값을 다루도록 gridSize는 ref로만 읽고 쓴다.
+    const gridSizeRef = useRef(gridSize);
+    useEffect(() => { gridSizeRef.current = gridSize; }, [gridSize]);
+    const gridSizePersistTimerRef = useRef(null);
+
+    const setGridSizeClamped = (newSizeRaw) => {
+        const newSize = Math.max(20, Math.min(200, Math.round(newSizeRaw)));
+        if (newSize === gridSizeRef.current) return;
+        gridSizeRef.current = newSize;
         setGridSize(newSize);
 
-        const updatedTokens = tokens.map(t => ({
+        const updatedTokens = tokensRef.current.map(t => ({
             ...t,
             gridPos: calculateGridPos(t.x, t.y, newSize)
         }));
-        setTokens(updatedTokens);
         tokensRef.current = updatedTokens;
-        notifyParentState({ gridSize: newSize, tokens: updatedTokens });
+        setTokens(updatedTokens);
+
+        // 💾 슬라이더 드래그/휠은 짧은 시간에 여러 번 바뀌므로, 매번 상위로 저장하는 대신
+        // 조작이 멈추고 잠시 후에만 저장한다 (줌 배율 저장과 같은 방식)
+        if (gridSizePersistTimerRef.current) clearTimeout(gridSizePersistTimerRef.current);
+        gridSizePersistTimerRef.current = setTimeout(() => {
+            notifyParentStateRef.current({ gridSize: gridSizeRef.current, tokens: tokensRef.current });
+        }, 300);
     };
+
+    // 🖱️ 격자 크기 슬라이더 위에서 마우스 휠 - 네이티브로 등록해야 preventDefault가 먹혀 휠을 굴려도 페이지가 스크롤되지 않는다.
+    // showGrid를 끄면 슬라이더 DOM 자체가 사라졌다 다시 생기므로, 꺼졌다 켜질 때마다 리스너를 다시 붙인다.
+    const gridSizeControlRef = useRef(null);
+    useEffect(() => {
+        const el = gridSizeControlRef.current;
+        if (!el) return undefined;
+
+        const handleGridWheelNative = (e) => {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? 4 : -4;
+            setGridSizeClamped(gridSizeRef.current + delta);
+        };
+
+        el.addEventListener('wheel', handleGridWheelNative, { passive: false });
+        return () => el.removeEventListener('wheel', handleGridWheelNative);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showGrid]);
 
     // 🎯 지도 오프셋 미세 조절
     const nudgeMapOffset = (dx, dy) => {
@@ -735,6 +767,16 @@ const BattleMapPanel = ({
     const selectedToken = tokens.find(t => t.id === selectedTokenId);
     const currentGridStyle = GRID_COLORS[gridColorKey] || GRID_COLORS.amber;
 
+    // 📐 격자 표시 간격 자동 보정 - 격자를 20px처럼 작게 두고 화면 배율까지 축소하면 실제 화면에 보이는 칸 크기가
+    // 몇 픽셀 수준으로 촘촘해져서 눈이 어지러운 촘촘한 줄무늬(모아레)로 보인다. 실제 칸 크기(gridSize, 토큰
+    // 좌표 계산)는 그대로 두고, "화면에 그리는 선"만 2/4/8칸 단위로 건너뛰어 최소 시야 간격을 확보한다.
+    const gridScaleFactor = mapScale / 100;
+    const MIN_VISIBLE_GRID_PX = 22; // 화면에서 격자 한 칸이 이보다 작아지면 다음 단계로 건너뛴다
+    let gridDisplayStep = 1;
+    while (gridSize * gridScaleFactor * gridDisplayStep < MIN_VISIBLE_GRID_PX && gridDisplayStep < 64) {
+        gridDisplayStep *= 2;
+    }
+
     return (
         <div
             className="flex flex-col gap-3 p-3 rounded-xl border bg-[var(--card-bg)] select-none touch-none h-full min-h-0 overflow-hidden"
@@ -815,27 +857,35 @@ const BattleMapPanel = ({
                         {showGrid ? '▦ 격자 켜짐' : '▢ 격자 꺼짐'}
                     </button>
 
-                    {/* 📐 격자 크기 조절 */}
+                    {/* 📐 격자 크기 조절 - 드래그하거나, 위에 마우스를 올리고 휠을 굴려서 조절한다 */}
                     {showGrid && (
-                        <div className="flex items-center gap-1 bg-slate-900/90 px-1.5 py-0.5 rounded border border-amber-500/40 text-xs">
-                            <span className="text-[0.65rem] text-slate-400 font-bold">격자:</span>
-                            <button
-                                type="button"
-                                onClick={() => handleGridSizeChange(-4)}
-                                className="px-1 py-0 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-amber-300 font-bold rounded text-[0.65rem]"
-                            >
-                                -
-                            </button>
-                            <span className="text-[0.7rem] font-mono min-w-[32px] text-center font-bold text-amber-400">
+                        <div
+                            ref={gridSizeControlRef}
+                            className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-0.5 rounded border border-amber-500/40 text-xs"
+                            title="드래그하거나 마우스 휠로 격자 크기를 조절하세요"
+                        >
+                            <span className="text-[0.65rem] text-slate-400 font-bold shrink-0">격자:</span>
+                            <input
+                                type="range"
+                                min={20}
+                                max={200}
+                                step={4}
+                                value={gridSize}
+                                onChange={(e) => setGridSizeClamped(Number(e.target.value))}
+                                className="w-20 accent-amber-500 cursor-pointer"
+                            />
+                            <span className="text-[0.7rem] font-mono min-w-[36px] text-center font-bold text-amber-400 shrink-0">
                                 {gridSize}px
                             </span>
-                            <button
-                                type="button"
-                                onClick={() => handleGridSizeChange(4)}
-                                className="px-1 py-0 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-amber-300 font-bold rounded text-[0.65rem]"
-                            >
-                                +
-                            </button>
+                            {/* 화면 배율까지 낮아 격자를 몇 칸 단위로 건너뛰어 그리고 있을 때만 안내 - 실제 칸 크기는 그대로다 */}
+                            {gridDisplayStep > 1 && (
+                                <span
+                                    className="text-[0.62rem] text-slate-400 font-bold shrink-0 whitespace-nowrap"
+                                    title="화면이 너무 촘촘해지지 않도록 격자를 몇 칸씩 묶어 표시 중입니다. 실제 칸 크기는 그대로입니다."
+                                >
+                                    ({gridDisplayStep}칸씩 표시)
+                                </span>
+                            )}
                         </div>
                     )}
 
@@ -1028,7 +1078,9 @@ const BattleMapPanel = ({
                     1.5px 격자선을 축소 렌더링(민입/앨리어싱)하는 과정에서 표본 지점이 선과 선 사이 투명한 틈에 걸려
                     격자 전체가 통째로 사라지는 문제가 있다(지도를 일정 크기 이하로 축소했을 때 보고된 현상).
                     그래서 격자만 transform 밖으로 빼고, 같은 pan/zoom 결과를 backgroundPosition/backgroundSize로 직접
-                    계산해 항상 실제 화면 픽셀 두께(1.5px)로 그린다 - 배율과 무관하게 선이 얇아질 뿐 사라지지는 않는다. */}
+                    계산해 항상 실제 화면 픽셀 두께(1.5px)로 그린다 - 배율과 무관하게 선이 얇아질 뿐 사라지지는 않는다.
+                    여기에 gridDisplayStep(위에서 계산)을 곱해, 격자가 너무 촘촘해지면 자동으로 2/4/8칸 단위로
+                    건너뛰어 그려서 눈이 어지러운 모아레 줄무늬가 되는 것을 막는다. */}
                 {showGrid && (
                     <div
                         className="absolute inset-0 pointer-events-none z-10"
@@ -1037,7 +1089,7 @@ const BattleMapPanel = ({
                                 linear-gradient(to right, ${currentGridStyle.line} 1.5px, transparent 1.5px),
                                 linear-gradient(to bottom, ${currentGridStyle.line} 1.5px, transparent 1.5px)
                             `,
-                            backgroundSize: `${gridSize * (mapScale / 100)}px ${gridSize * (mapScale / 100)}px`,
+                            backgroundSize: `${gridSize * gridScaleFactor * gridDisplayStep}px ${gridSize * gridScaleFactor * gridDisplayStep}px`,
                             backgroundPosition: `${panOffset.x}px ${panOffset.y}px`,
                             filter: `drop-shadow(0px 0px 1px ${currentGridStyle.shadow})`,
                             transition: (isPanning || pinchRef.current.active) ? 'none' : 'background-position 0.1s ease-out, background-size 0.1s ease-out'
