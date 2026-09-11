@@ -13,6 +13,7 @@ import { callGemini, splitResponseParts, userTextPart } from './geminiService';
 import { GM_STATIC_RULES, GM_RESPONSE_SCHEMA } from '../resource/dataSet/gmConfig';
 import { parseGridLabel, gridIndexToPixel } from '../util/gridCoords';
 import { acquireTurnLock, releaseTurnLock, updateRoom, pushChatLog } from './firebaseClient';
+import { buildScenarioContext } from "../util/scenarioContext";
 
 const DEFAULT_GRID_SIZE = 56;
 
@@ -131,8 +132,10 @@ const buildMultiplayerSystemInstruction = ({ scenarioData, mapUrl1, mapUrl2, ses
     }
 
     if (scenarioData) {
-        const jsonStr = JSON.stringify(scenarioData);
-        parts.push('', '## 세션 진행 시나리오 데이터 (JSON)', jsonStr.length > 3000 ? jsonStr.substring(0, 3000) + '\n...[생략]' : jsonStr);
+        const scenarioContext = buildScenarioContext(scenarioData, sessionState?.loc);
+        parts.push('', '## 세션 진행 시나리오 데이터 (JSON) - 현재 위치한 방(current_room) + 몬스터 스탯(bestiary) 전체');
+        parts.push('- current_room은 지금 있는 장소의 상세 정보다. bestiary의 AC/HP/피해 주사위는 실제 수치이니 임의로 지어내지 않는다.');
+        parts.push(JSON.stringify(scenarioContext ?? scenarioData));
     }
 
     return parts.join('\n');

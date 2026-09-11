@@ -24,6 +24,7 @@ import { rollPhysicalDie, DICE_BOX_SELECTOR, announceDiceResult, DICE_ROLLING_EV
 import "../resource/CSS/characterSheet.css";
 import TraitsCard from "../component/TraitsCard";
 import InventoryCard from "../component/InventoryCard";
+import {buildScenarioContext} from "../util/scenarioContext";
 
 const SESSION_STORAGE_KEY = 'cs_trpg_session_data';
 const LAYOUT_STORAGE_KEY = 'cs_workspace_layout';
@@ -1180,10 +1181,11 @@ class CharacterSheetManager extends Component {
         }
 
         if (scenarioData) {
+            const scenarioContext = buildScenarioContext(scenarioData, sessionState?.loc);
             instructionParts.push('');
-            instructionParts.push('## 세션 진행 시나리오 데이터 (JSON)');
-            const jsonStr = JSON.stringify(scenarioData);
-            instructionParts.push(jsonStr.length > 3000 ? jsonStr.substring(0, 3000) + '\n...[생략]' : jsonStr);
+            instructionParts.push('## 세션 진행 시나리오 데이터 (JSON) - 현재 위치한 방 + bestiary 전체');
+            instructionParts.push('- bestiary의 AC/HP/피해 주사위는 실제 수치이니 임의로 지어내지 않는다.');
+            instructionParts.push(JSON.stringify(scenarioContext ?? scenarioData));
         }
 
         return instructionParts.join('\n');
