@@ -8,8 +8,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     generateRoomCode, roomExists, createRoom, subscribeRoom, setRoomPlayer, removeRoomPlayer
+  , updateRoom
 } from '../service/firebaseClient';
 import { sendMultiplayerAction } from '../service/multiplayerService';
+// 🖼️ 전투지도/토큰 이미지는 Firebase Storage(요금제 전환이 필요할 수 있음) 대신, 솔로 모드와 똑같이
+// 로컬에서 압축한 base64를 그대로 Realtime Database(무료 Spark 플랜)에 저장한다 - 별도 설정/카드 등록 없이
+// 바로 동작하게 하기 위함. BattleMapPanel에 uploadImage prop을 넘기지 않으면 자동으로 이 방식이 된다.
 
 const PLAYER_ID_STORAGE = 'cs_mp_player_id';
 
@@ -22,7 +26,13 @@ const getOrCreatePlayerId = () => {
     return id;
 };
 
-const MultiplayerRoomPanel = ({ apiKey, model, scenarioData, mapUrl1, mapUrl2, charData }) => {
+const MultiplayerRoomPanel = ({
+    apiKey, model, scenarioData, mapUrl1, mapUrl2, charData
+    // 🗺️ onRoomStateChange: 방 접속 상태가 바뀔 때마다(입장/퇴장/방 데이터 갱신) 상위(CharacterSheetManager)에게
+    // 알려서, 메인 화면의 전투지도(BattleMapPanel)가 "혼자 하는 로컬 지도" 대신 "이 방의 공유 지도"를
+    // 그리도록 넘겨준다. 방 밖에 있을 땐 null로 알린다.
+  , onRoomStateChange
+}) => {
     const [playerId] = useState(getOrCreatePlayerId);
     const [playerName, setPlayerName] = useState('');
     const [joinCodeInput, setJoinCodeInput] = useState('');
@@ -61,7 +71,8 @@ const MultiplayerRoomPanel = ({ apiKey, model, scenarioData, mapUrl1, mapUrl2, c
             while (await roomExists(code)) code = generateRoomCode(); // 코드 중복 방지 (희박하지만 재생성)
 
             await createRoom(code, {
-                sessionState : {}
+                hostId : playerId // 🗺️ 이 방을 만든 사람 = 방장. 전투지도 배경 업로드 권한을 여기에 묶는다.
+              , sessionState : {}
               , mapState : { tokens : [] }
               , gmHistory : []
               , chatLog : {}
@@ -102,6 +113,40 @@ const MultiplayerRoomPanel = ({ apiKey, model, scenarioData, mapUrl1, mapUrl2, c
         setRoomId(null);
         setRoomData(null);
     };
+
+    // 🗺️ 방장(hostId === 나) 여부 - 전투지도 배경 업로드 권한을 여기에 묶는다.
+    const isHost = !!roomId && roomData?.hostId === playerId;
+
+    // 지도 상태를 이 방의 mapState 노드에 그대로 기록 - Realtime Database의 update()는 지정한
+    // 키 전체를 덮어쓰므로(부분 병합이 아님), BattleMapPanel이 매번 완전한 mapState를 통째로 넘겨준다.
+    const updateMapState = useCallback((nextMapState) => {
+        if (!roomId) return;
+        updateRoom(roomId, { mapState : nextMapState });
+    }, [roomId]);
+
+    // 📡 방 접속 상태가 바뀔 때마다(입장/퇴장/다른 사람이 지도를 바꿔서 roomData가 갱신될 때마다)
+    // 상위에 알려서, 메인 화면의 전투지도가 이 방의 공유 mapState를 그리도록 한다.
+    // uploadImage를 넘기지 않으므로 BattleMapPanel은 솔로 모드와 동일하게 로컬 base64 압축만 쓴다
+    // (Firebase Storage/Blaze 요금제 없이도 바로 동작하게 하기 위함 - 대신 이미지가 Realtime Database에
+    // base64로 그대로 저장되니, 아주 큰 지도를 자주 바꾸는 용도로는 안 맞을 수 있다).
+    useEffect(() => {
+        if (typeof onRoomStateChange !== 'function') return;
+        if (!roomId) { onRoomStateChange(null); return; }
+        onRoomStateChange({
+            roomId
+          , playerId
+          , isHost
+          , mapState : roomData?.mapState || { tokens : [] }
+          , updateMapState
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [roomId, playerId, isHost, roomData?.mapState, updateMapState]);
+
+    // 🚪 이 패널이 언마운트되면(예: "🎲 혼자 플레이"로 전환) 상위에 더는 방에 없다고 알린다
+    useEffect(() => () => {
+        if (typeof onRoomStateChange === 'function') onRoomStateChange(null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleSend = async () => {
         const text = inputText.trim();
@@ -148,6 +193,7 @@ const MultiplayerRoomPanel = ({ apiKey, model, scenarioData, mapUrl1, mapUrl2, c
                 <div className="text-base font-bold" style={{ color : 'var(--accent-color)' }}>🤝 2인 협동 세션</div>
                 <p className="text-xs" style={{ color : 'var(--text-muted)' }}>
                     같은 시나리오를 다른 사람과 실시간으로 함께 플레이해요. 각자 설정에 자기 Gemini API 키를 넣어두면, 본인이 보낸 메시지는 본인 키로 처리돼요.
+                    방을 만든 사람(방장)이 [🗺️ 전투 지도]에서 지도를 올리면 같은 방의 모든 참가자 화면에 실시간으로 함께 보여요.
                 </p>
 
                 <label className="text-xs font-bold" style={{ color : 'var(--text-muted)' }}>
@@ -216,6 +262,7 @@ const MultiplayerRoomPanel = ({ apiKey, model, scenarioData, mapUrl1, mapUrl2, c
 
             <div className="text-xs mb-2 shrink-0" style={{ color : 'var(--text-muted)' }}>
                 파티: {players.map(p => p.name).join(', ') || '(아직 없음)'} · 코드를 상대방에게 공유하세요
+                {isHost && <span className="ml-1 font-bold" style={{ color : 'var(--accent-color)' }}>· 👑 방장(전투지도 업로드 가능)</span>}
             </div>
 
             <div className="cs-scroll flex-1 min-h-0 overflow-y-auto flex flex-col gap-2 mb-3 pr-1">

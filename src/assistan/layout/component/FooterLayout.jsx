@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { NavigationItems } from "../resources/DataSet/NavigationItems";
 import { homeScreenItems } from "../../homeScreen/resource/resources";
 
-const bgg4AssistantIcoPath = "/bgg4Assistant_ico.webp";
+const bgg4AssistantIcoPath = "/티굴.png";
 
 class FooterLayout extends Component {
   state = {};
@@ -22,8 +22,8 @@ class FooterLayout extends Component {
     const year = new Date().getFullYear();
 
     return (
-      <footer className="border-t border-white/10 bg-slate-950 text-slate-300">
-        <div className="w-full h-px bg-gradient-to-r from-transparent via-cyan-400/40 to-transparent" />
+      <footer className="border-t border-white/10 bg-[#0a0118] text-slate-300">
+        <div className="w-full h-px bg-gradient-to-r from-transparent via-purple-400/40 to-transparent" />
         <div className="container px-4 py-10 mx-auto sm:px-6 sm:py-12">
           <div className="grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-4">
             <div className="lg:col-span-2">
@@ -33,7 +33,7 @@ class FooterLayout extends Component {
                   alt="logo"
                   className="h-9 w-9 rounded-xl ring-1 ring-white/10"
                 />
-                <span className="text-lg font-bold text-transparent bg-gradient-to-r from-cyan-300 to-indigo-300 bg-clip-text">
+                <span className="text-lg font-bold text-transparent bg-gradient-to-r from-purple-300 to-violet-300 bg-clip-text">
                   Bgg4Assistant
                 </span>
               </Link>

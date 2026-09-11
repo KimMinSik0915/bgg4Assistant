@@ -16,8 +16,8 @@ const SettingsScreen = lazy(() => import("./assistan/settings/main/SettingsScree
 
 // 화면 코드가 아직 안 내려와서 잠깐 기다리는 동안 보여줄 아주 가벼운 자리표시자(레이아웃 배경과 톤을 맞춤)
 const RouteLoading = () => (
-    <div className="flex min-h-[60vh] items-center justify-center bg-slate-950">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-400/30 border-t-cyan-400"/>
+    <div className="flex min-h-[60vh] items-center justify-center bg-[#0a0118]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-purple-400/30 border-t-purple-400"/>
     </div>
 );
 

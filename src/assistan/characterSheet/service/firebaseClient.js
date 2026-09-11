@@ -18,6 +18,9 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
     getDatabase, ref, set, update, onValue, off, get, runTransaction, push, serverTimestamp, remove
 } from 'firebase/database';
+// 🖼️ 전투지도/토큰 이미지는 Firebase Storage를 쓰지 않는다 - Storage 버킷 생성은 Blaze(종량제)
+// 요금제 전환(결제 수단 등록)이 필요할 수 있어서, 카드 등록 없이 바로 쓸 수 있도록 압축한
+// base64 이미지를 Realtime Database(무료 Spark 플랜)에 그대로 저장하는 방식을 쓴다.
 
 const FIREBASE_CONFIG = {
     apiKey: "AIzaSyBe7Z889wUM6W4inCq70y0w1a1xPuA6-GI",

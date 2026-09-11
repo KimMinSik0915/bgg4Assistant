@@ -93,9 +93,9 @@ const CLEAR_AT_MS = 520;
 
 // 이 위젯은 사이트 어디서나(캐릭터 시트 테마가 없는 화면 포함) 떠 있어야 하므로, 캐릭터 시트의
 // 테마 CSS 변수(--accent-color 등)에 기대지 않고 자체 고정 팔레트를 쓴다.
-const FAB_GRADIENT = "linear-gradient(135deg, #6366f1 0%, #22d3ee 100%)";
-const DICE_ACCENT = "#22d3ee";
-const DICE_HIGHLIGHT = "#818cf8";
+const FAB_GRADIENT = "linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)";
+const DICE_ACCENT = "#8b5cf6";
+const DICE_HIGHLIGHT = "#c4b5fd";
 
 // game-icons.net의 실제 다이스 도안(D4·D8·D10·D12·D20은 Delapouite·Skoll 작가, CC BY 3.0 —
 // 자세한 출처는 resource/diceIcons/CREDITS.md)을 마스크로 써서 브랜드 그라디언트를 입힌다.
@@ -839,7 +839,7 @@ const DicePanel = () => {
                 onClick={() => incrementDie(sides)}
                 className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-lg border py-1.5 transition-all ${
                   count > 0
-                    ? "scale-105 bg-cyan-400/15"
+                    ? "scale-105 bg-violet-400/15"
                     : "border-white/15 bg-white/5 opacity-80 hover:opacity-100"
                 }`}
                 style={count > 0 ? { borderColor: diceColor.accent } : undefined}

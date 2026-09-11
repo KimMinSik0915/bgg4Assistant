@@ -22,7 +22,7 @@ const ResourceControl = ({ label, value, onIncrement, onDecrement, onConvert }) 
         {onConvert && (
             <button
                 onClick={onConvert}
-                className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-cyan-400/15 px-2.5 py-1 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-400/25 active:scale-95"
+                className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-purple-400/15 px-2.5 py-1 text-xs font-semibold text-purple-300 transition hover:bg-purple-400/25 active:scale-95"
             >
                 <ArrowRightCircle size={14} /> 승점 변환
             </button>

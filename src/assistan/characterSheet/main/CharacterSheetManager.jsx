@@ -92,7 +92,9 @@ class CharacterSheetManager extends Component {
       , mapUrl2: ''
       , scenarioData: null
       , sessionState: null // 백그라운드 장기 기억 스냅샷 (clues, quests 포함)
-      , mapState: null     // 전투지도 저장소
+      , mapState: null     // 전투지도 저장소 (솔로 모드 전용 - 로컬/세션 저장)
+      , multiplayerRoom: null // 🤝 협동 세션 접속 중일 때만 값이 있음: { roomId, playerId, isHost, mapState, updateMapState, uploadImage }
+                              //    있으면 전투지도가 이 방의 공유 mapState를 그리고, 없으면 위 solo mapState를 그린다.
       , isFetchLoading: false
       , fetchError: null
       , sheetCollapsed: false   // 좌측 캐릭터 시트 접기/펼치기 (데스크탑)
@@ -676,6 +678,12 @@ class CharacterSheetManager extends Component {
         }
       , setMobileViewMode : (mode) => {
             this.setState({ mobileViewMode : mode }, this.saveLayoutPrefs);
+        }
+        // 🤝 GmChatPanel(→MultiplayerRoomPanel)이 방 접속 상태가 바뀔 때마다 호출한다.
+        // roomState가 있으면 전투지도가 그 방의 공유 mapState를 그리게 되고, null이면(방을 나가거나
+        // 애초에 혼자 플레이 중이면) 다시 이 컴포넌트의 로컬 mapState로 돌아간다.
+      , setMultiplayerRoomState : (roomState) => {
+            this.setState({ multiplayerRoom : roomState });
         }
       , toggleUploadActive : () => {
             this.setState(prev => ({ isUploadActive : !prev.isUploadActive }));
@@ -1332,7 +1340,7 @@ class CharacterSheetManager extends Component {
     render() {
         const {
             sheetSubTab, isUploadActive, rawInput, charData, themeKey, inspiration, usedFeatures, usedSpellSlots
-          , hitEffectKey, mapState
+          , hitEffectKey, mapState, multiplayerRoom
           , geminiApiKey, geminiModel, showGmSettings, gmMessages, gmInput, isGmLoading, gmAttachments
           , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
           , sheetCollapsed, sheetWidth, isResizingSheet, chatWidth, isResizingChat, isMobile, activeTab
@@ -1341,6 +1349,29 @@ class CharacterSheetManager extends Component {
         } = this.state;
         const themeVars = themeToCssVars(themeKey);
         const hasWorkspace = !!charData;
+
+        // 🗺️ 전투 지도 바인딩: 협동 세션에 접속 중이면(multiplayerRoom) 그 방의 공유 mapState를,
+        // 아니면 이 컴포넌트의 로컬 mapState(솔로 모드, 세션 저장)를 그린다. 세 군데(모바일 탭/전부보기/
+        // 데스크탑) BattleMapPanel이 전부 이 값을 함께 쓴다.
+        // key를 솔로↔협동 전환 시 바꿔서, 전환 순간 BattleMapPanel을 새로 마운트시킨다 - 그래야
+        // "마운트 시 1회"만 도는 초기 상태 복원 로직이 방의 지도로 다시 정확히 초기화된다.
+        const battleMapProps = multiplayerRoom
+            ? {
+                key : `room-${multiplayerRoom.roomId}`
+              , mapState : multiplayerRoom.mapState
+              , liveSync : true
+              , canUploadMap : multiplayerRoom.isHost
+                // uploadImage는 일부러 안 넘긴다 - Firebase Storage(요금제 전환 필요) 없이, 솔로 모드와
+                // 같은 로컬 base64 압축을 그대로 써서 Realtime Database(무료)만으로 동작하게 하기 위함.
+              , onUpdateMapState : multiplayerRoom.updateMapState
+            }
+            : {
+                key : 'solo'
+              , mapState
+              , onUpdateMapState : (newMapState) => {
+                    this.setState({ mapState : newMapState }, this.saveSession);
+                }
+            };
 
         const subTabList = [
             { id: 'abilities', label: '🏋️ 능력치' },
@@ -1631,6 +1662,7 @@ class CharacterSheetManager extends Component {
                                         onChangeMapUrl2={this.handler.changeMapUrl2}
                                         onLoadScenario={this.handler.handleLoadScenario}
                                         charData={charData}
+                                        onMultiplayerStateChange={this.handler.setMultiplayerRoomState}
                                     />
                                 </div>
                             )}
@@ -1644,11 +1676,8 @@ class CharacterSheetManager extends Component {
                             {activeTab === 'map' && (
                                 <div className="h-full min-h-0">
                                     <BattleMapPanel
-                                        mapState={mapState}
+                                        {...battleMapProps}
                                         isMobile={isMobile}
-                                        onUpdateMapState={(newMapState) => {
-                                            this.setState({ mapState : newMapState }, this.saveSession);
-                                        }}
                                     />
                                 </div>
                             )}
@@ -1703,11 +1732,8 @@ class CharacterSheetManager extends Component {
                                 {/* 🗺️ 전투 지도 - 메인, 남는 공간을 전부 차지 */}
                                 <div className="flex-1 min-h-[160px]">
                                     <BattleMapPanel
-                                        mapState={mapState}
+                                        {...battleMapProps}
                                         isMobile={isMobile}
-                                        onUpdateMapState={(newMapState) => {
-                                            this.setState({ mapState : newMapState }, this.saveSession);
-                                        }}
                                     />
                                 </div>
 
@@ -1750,6 +1776,7 @@ class CharacterSheetManager extends Component {
                                         onChangeMapUrl2={this.handler.changeMapUrl2}
                                         onLoadScenario={this.handler.handleLoadScenario}
                                         charData={charData}
+                                        onMultiplayerStateChange={this.handler.setMultiplayerRoomState}
                                     />
                                 </div>
                             </div>
@@ -1807,11 +1834,8 @@ class CharacterSheetManager extends Component {
                             <div className="flex-1 min-w-[420px] h-full min-h-0 flex">
                                 <div className="flex-1 min-w-[280px] h-full min-h-0">
                                     <BattleMapPanel
-                                        mapState={mapState}
+                                        {...battleMapProps}
                                         isMobile={isMobile}
-                                        onUpdateMapState={(newMapState) => {
-                                            this.setState({ mapState : newMapState }, this.saveSession);
-                                        }}
                                     />
                                 </div>
 
@@ -1856,6 +1880,7 @@ class CharacterSheetManager extends Component {
                                         onChangeMapUrl2={this.handler.changeMapUrl2}
                                         onLoadScenario={this.handler.handleLoadScenario}
                                         charData={charData}
+                                        onMultiplayerStateChange={this.handler.setMultiplayerRoomState}
                                     />
                                 </div>
                             </div>
