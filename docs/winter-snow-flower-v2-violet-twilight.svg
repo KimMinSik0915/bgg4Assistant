@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+  <title>겨울향눈꽃 - Violet Twilight</title>
+  <defs>
+    <radialGradient id="sky2" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#4a3b78"/>
+      <stop offset="50%" stop-color="#2e2456"/>
+      <stop offset="100%" stop-color="#160f30"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f3e8ff" stop-opacity="0.9"/>
+      <stop offset="45%" stop-color="#d9c2ff" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#d9c2ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="petal2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="55%" stop-color="#e6d6ff"/>
+      <stop offset="100%" stop-color="#b79cf0"/>
+    </linearGradient>
+    <linearGradient id="petalShine2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="core2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="60%" stop-color="#ecdcff"/>
+      <stop offset="100%" stop-color="#b79cf0"/>
+    </radialGradient>
+    <filter id="soft2" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <rect width="800" height="800" fill="url(#sky2)"/>
+
+  <!-- distant small flowers drifting -->
+  <g opacity="0.55">
+    <g transform="translate(140,150) scale(0.28)">
+      <use href="#miniFlower2"/>
+    </g>
+    <g transform="translate(660,200) scale(0.22)">
+      <use href="#miniFlower2"/>
+    </g>
+    <g transform="translate(120,620) scale(0.24)">
+      <use href="#miniFlower2"/>
+    </g>
+    <g transform="translate(680,600) scale(0.3)">
+      <use href="#miniFlower2"/>
+    </g>
+  </g>
+
+  <defs>
+    <g id="miniFlower2">
+      <g id="mp2">
+        <path d="M0,-6 C22,-38 20,-76 0,-96 C-20,-76 -22,-38 0,-6 Z" fill="#f1e6ff" opacity="0.8"/>
+      </g>
+      <use href="#mp2" transform="rotate(60)"/>
+      <use href="#mp2" transform="rotate(120)"/>
+      <use href="#mp2" transform="rotate(180)"/>
+      <use href="#mp2" transform="rotate(240)"/>
+      <use href="#mp2" transform="rotate(300)"/>
+      <circle r="14" fill="#fff" opacity="0.9"/>
+    </g>
+  </defs>
+
+  <circle cx="400" cy="380" r="270" fill="url(#glow2)"/>
+
+  <path d="M0,650 Q120,610 240,645 T480,635 T800,650 L800,800 L0,800 Z" fill="#25194a" opacity="0.85"/>
+  <path d="M0,700 Q150,665 300,695 T600,685 T800,700 L800,800 L0,800 Z" fill="#170f34"/>
+
+  <g transform="translate(400,380)">
+    <circle r="190" fill="#e3d2ff" opacity="0.14" filter="url(#soft2)"/>
+
+    <g stroke="#f3e8ff" stroke-width="3" stroke-linecap="round" opacity="0.85">
+      <g id="arm2">
+        <line x1="0" y1="0" x2="0" y2="-175"/>
+        <line x1="0" y1="-98" x2="-27" y2="-129"/>
+        <line x1="0" y1="-98" x2="27" y2="-129"/>
+        <line x1="0" y1="-144" x2="-21" y2="-165"/>
+        <line x1="0" y1="-144" x2="21" y2="-165"/>
+      </g>
+      <use href="#arm2" transform="rotate(60)"/>
+      <use href="#arm2" transform="rotate(120)"/>
+      <use href="#arm2" transform="rotate(180)"/>
+      <use href="#arm2" transform="rotate(240)"/>
+      <use href="#arm2" transform="rotate(300)"/>
+    </g>
+
+    <g id="petals2">
+      <g id="petal2a">
+        <path d="M0,-10 C36,-62 32,-122 0,-155 C-32,-122 -36,-62 0,-10 Z" fill="url(#petal2)" stroke="#ffffff" stroke-width="1.5"/>
+        <path d="M0,-20 C17,-60 15,-104 0,-132" fill="none" stroke="url(#petalShine2)" stroke-width="3" opacity="0.8"/>
+      </g>
+      <use href="#petal2a" transform="rotate(60)"/>
+      <use href="#petal2a" transform="rotate(120)"/>
+      <use href="#petal2a" transform="rotate(180)"/>
+      <use href="#petal2a" transform="rotate(240)"/>
+      <use href="#petal2a" transform="rotate(300)"/>
+    </g>
+
+    <g transform="rotate(30) scale(0.55)" opacity="0.95">
+      <use href="#petal2a"/>
+      <use href="#petal2a" transform="rotate(60)"/>
+      <use href="#petal2a" transform="rotate(120)"/>
+      <use href="#petal2a" transform="rotate(180)"/>
+      <use href="#petal2a" transform="rotate(240)"/>
+      <use href="#petal2a" transform="rotate(300)"/>
+    </g>
+
+    <circle r="27" fill="url(#core2)"/>
+    <circle r="27" fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.8"/>
+
+    <g fill="#ffffff">
+      <circle cx="75"  cy="-195" r="2.4" opacity="0.9"/>
+      <circle cx="-105" cy="-155" r="1.8" opacity="0.7"/>
+      <circle cx="155" cy="-42"  r="2.0" opacity="0.8"/>
+      <circle cx="-155" cy="62"  r="1.6" opacity="0.6"/>
+      <circle cx="125" cy="155"  r="2.2" opacity="0.85"/>
+      <circle cx="-75" cy="195"  r="1.8" opacity="0.7"/>
+    </g>
+  </g>
+
+  <g fill="#f5ecff">
+    <circle cx="60"  cy="120" r="2.2" opacity="0.7"/>
+    <circle cx="180" cy="500" r="2.6" opacity="0.6"/>
+    <circle cx="260" cy="180" r="1.8" opacity="0.5"/>
+    <circle cx="330" cy="620" r="2.2" opacity="0.6"/>
+    <circle cx="500" cy="560" r="2.6" opacity="0.65"/>
+    <circle cx="600" cy="240" r="2.0" opacity="0.55"/>
+    <circle cx="680" cy="520" r="2.4" opacity="0.6"/>
+    <circle cx="720" cy="640" r="1.8" opacity="0.5"/>
+    <circle cx="40"  cy="600" r="2.0" opacity="0.55"/>
+    <circle cx="420" cy="720" r="2.2" opacity="0.6"/>
+  </g>
+</svg>

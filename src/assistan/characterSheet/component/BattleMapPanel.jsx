@@ -17,7 +17,8 @@ const GRID_COLORS = {
 
 // 💡 이미지 압축 헬퍼 함수 (압축 후 실제 픽셀 크기도 함께 반환 - AI 지도 비전 조회 시 %좌표를
 // 픽셀로 환산하는 데 필요하다)
-const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
+// 다른 곳(예: 커스텀 uploadImage를 넘기는 협동 세션 확장)에서도 같은 압축 로직을 쓸 수 있게 export한다.
+export const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -45,7 +46,18 @@ const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
     });
 };
 
-const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
+const BattleMapPanel = ({
+    mapState, onUpdateMapState, isMobile
+    // 🤝 협동 세션 전용 props (솔로 모드에서는 전달되지 않으므로 전부 기본값으로 기존 동작 유지)
+    // - liveSync: true면 mapState.mapUpdatedAt이 바뀔 때마다(=다른 참가자/방장이 지도를 바꿨을 때)
+    //   내 화면도 그 내용으로 다시 맞춘다(단, 확대/이동은 각자 화면 개인 설정이라 제외).
+    // - canUploadMap: false면 "➕ 지도" 업로드 버튼을 숨긴다(방장만 지도를 올릴 수 있게 하는 용도).
+    // - uploadImage: 있으면 로컬 base64 압축 대신 이 함수로 이미지를 올리고 돌아온 URL을 쓴다.
+    //   현재 협동 세션(MultiplayerRoomPanel)은 이 prop을 넘기지 않아서 기본값(로컬 base64 압축)을
+    //   그대로 쓴다 - Firebase Storage(요금제 전환이 필요할 수 있음) 없이 Realtime Database만으로
+    //   동작하게 하기 위한 선택이며, 필요해지면 이 자리에 다시 연결하면 된다.
+  , liveSync = false, canUploadMap = true, uploadImage
+}) => {
     const [maps, setMaps] = useState([]);
     const [activeMapId, setActiveMapId] = useState(null);
     const [tokens, setTokens] = useState([]);
@@ -101,22 +113,39 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
     const zoomPersistTimerRef = useRef(null);
     const pinchRef = useRef({ active: false, lastDist: 0 });
 
-    // 💾 상위(sessionState) 전달 헬퍼
+    // 🔁 liveSync 모드에서 "방금 내가 직접 올린 갱신"과 "다른 참가자가 올린 갱신"을 구분하기 위한 표식.
+    // notifyParentState가 찍은 타임스탬프를 기억해뒀다가, 나중에 같은 값이 mapState로 되돌아오면
+    // (=내가 쓴 게 그대로 반영된 것뿐) 다시 처리하지 않는다.
+    const lastPushedUpdateAtRef = useRef(null);
+
+    // 💾 상위(sessionState 또는 Firebase 방 데이터) 전달 헬퍼
     const notifyParentState = (updated = {}) => {
-        if (typeof onUpdateMapState === 'function') {
-            onUpdateMapState({
-                maps: updated.maps ?? maps,
-                activeMapId: updated.activeMapId ?? activeMapId,
-                tokens: updated.tokens ?? tokensRef.current,
-                showGrid: updated.showGrid ?? showGrid,
-                gridSize: updated.gridSize ?? gridSize,
-                gridColorKey: updated.gridColorKey ?? gridColorKey,
-                mapScale: updated.mapScale ?? mapScale,
-                isMapLocked: updated.isMapLocked ?? isMapLocked,
-                panOffset: updated.panOffset ?? panOffset,
-                mapOffset: updated.mapOffset ?? mapOffset
-            });
+        if (typeof onUpdateMapState !== 'function') return;
+
+        const payload = {
+            maps: updated.maps ?? maps,
+            activeMapId: updated.activeMapId ?? activeMapId,
+            tokens: updated.tokens ?? tokensRef.current,
+            showGrid: updated.showGrid ?? showGrid,
+            gridSize: updated.gridSize ?? gridSize,
+            gridColorKey: updated.gridColorKey ?? gridColorKey,
+            isMapLocked: updated.isMapLocked ?? isMapLocked,
+            mapOffset: updated.mapOffset ?? mapOffset
+        };
+
+        if (liveSync) {
+            // 🤝 확대/화면 이동은 각자 보는 화면의 개인 설정이므로 공유 상태에는 싣지 않는다
+            // (그렇지 않으면 한 명이 확대할 때마다 다른 참가자들의 화면까지 같이 움직여버린다).
+            const stamp = Date.now();
+            lastPushedUpdateAtRef.current = stamp;
+            payload.mapUpdatedAt = stamp;
+        } else {
+            // 🎲 솔로 모드는 다음에 다시 열었을 때 보던 화면 그대로 복원해야 하므로 함께 저장한다
+            payload.mapScale = updated.mapScale ?? mapScale;
+            payload.panOffset = updated.panOffset ?? panOffset;
         }
+
+        onUpdateMapState(payload);
     };
 
     // 네이티브 휠 리스너(마운트 시 1회 등록)에서도 항상 최신 notifyParentState를 호출할 수 있도록 ref로 보관
@@ -155,6 +184,32 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
             tokensRef.current = mapState.tokens;
         }
     }, [mapState?.aiTokenUpdateAt, mapState?.tokens]);
+
+    // 🤝 [협동 세션 전용] 다른 참가자(방장의 지도 업로드 포함)가 mapState를 바꾸면 mapUpdatedAt이
+    // 갱신되어 여기로 전달된다. 그중 "내가 방금 직접 쓴 값"은 lastPushedUpdateAtRef와 같으므로
+    // 건너뛰고, 정말 남이 바꾼 값일 때만 지도/토큰/격자 설정을 내 화면에도 반영한다.
+    // (mapScale/panOffset은 각자 화면의 개인 설정이라 여기서 건드리지 않는다.)
+    useEffect(() => {
+        if (!liveSync) return;
+        const remoteAt = mapState?.mapUpdatedAt;
+        if (!remoteAt || remoteAt === lastPushedUpdateAtRef.current) return;
+        lastPushedUpdateAtRef.current = remoteAt;
+
+        if (mapState.maps) setMaps(mapState.maps);
+        if (mapState.activeMapId !== undefined) setActiveMapId(mapState.activeMapId);
+        if (mapState.tokens) {
+            setTokens(mapState.tokens);
+            tokensRef.current = mapState.tokens;
+        }
+        if (mapState.showGrid !== undefined) setShowGrid(mapState.showGrid);
+        if (mapState.gridSize !== undefined) setGridSize(mapState.gridSize);
+        if (mapState.gridColorKey) setGridColorKey(mapState.gridColorKey);
+        if (mapState.isMapLocked !== undefined) setIsMapLocked(mapState.isMapLocked);
+        if (mapState.mapOffset) setMapOffset(mapState.mapOffset);
+        // mapState 전체를 deps에 넣으면 부모가 매 렌더 새 객체를 내려줄 때마다 재실행되므로,
+        // "갱신됐는지"를 판단하는 mapUpdatedAt만 감시한다(위 로직도 그 값에만 반응하도록 짜여 있음).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [liveSync, mapState?.mapUpdatedAt]);
 
     const getPos = (e) => {
         if (e.touches && e.touches.length > 0) {
@@ -238,19 +293,51 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // 📐 격자 크기 조절
-    const handleGridSizeChange = (delta) => {
-        const newSize = Math.max(20, Math.min(200, gridSize + delta));
+    // 📐 격자 크기 조절 - 슬라이더 드래그/마우스 휠 둘 다 이 함수 하나로 처리한다.
+    // (버튼을 여러 번 클릭하는 대신 슬라이더를 드래그하거나, 그 위에서 휠을 굴려 바꿀 수 있게 한 것)
+    // 네이티브 wheel 리스너(마운트 시 1회 등록)에서도 항상 최신 값을 다루도록 gridSize는 ref로만 읽고 쓴다.
+    const gridSizeRef = useRef(gridSize);
+    useEffect(() => { gridSizeRef.current = gridSize; }, [gridSize]);
+    const gridSizePersistTimerRef = useRef(null);
+
+    const setGridSizeClamped = (newSizeRaw) => {
+        const newSize = Math.max(20, Math.min(200, Math.round(newSizeRaw)));
+        if (newSize === gridSizeRef.current) return;
+        gridSizeRef.current = newSize;
         setGridSize(newSize);
 
-        const updatedTokens = tokens.map(t => ({
+        const updatedTokens = tokensRef.current.map(t => ({
             ...t,
             gridPos: calculateGridPos(t.x, t.y, newSize)
         }));
-        setTokens(updatedTokens);
         tokensRef.current = updatedTokens;
-        notifyParentState({ gridSize: newSize, tokens: updatedTokens });
+        setTokens(updatedTokens);
+
+        // 💾 슬라이더 드래그/휠은 짧은 시간에 여러 번 바뀌므로, 매번 상위로 저장하는 대신
+        // 조작이 멈추고 잠시 후에만 저장한다 (줌 배율 저장과 같은 방식)
+        if (gridSizePersistTimerRef.current) clearTimeout(gridSizePersistTimerRef.current);
+        gridSizePersistTimerRef.current = setTimeout(() => {
+            notifyParentStateRef.current({ gridSize: gridSizeRef.current, tokens: tokensRef.current });
+        }, 300);
     };
+
+    // 🖱️ 격자 크기 슬라이더 위에서 마우스 휠 - 네이티브로 등록해야 preventDefault가 먹혀 휠을 굴려도 페이지가 스크롤되지 않는다.
+    // showGrid를 끄면 슬라이더 DOM 자체가 사라졌다 다시 생기므로, 꺼졌다 켜질 때마다 리스너를 다시 붙인다.
+    const gridSizeControlRef = useRef(null);
+    useEffect(() => {
+        const el = gridSizeControlRef.current;
+        if (!el) return undefined;
+
+        const handleGridWheelNative = (e) => {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? 4 : -4;
+            setGridSizeClamped(gridSizeRef.current + delta);
+        };
+
+        el.addEventListener('wheel', handleGridWheelNative, { passive: false });
+        return () => el.removeEventListener('wheel', handleGridWheelNative);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showGrid]);
 
     // 🎯 지도 오프셋 미세 조절
     const nudgeMapOffset = (dx, dy) => {
@@ -262,30 +349,91 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         notifyParentState({ mapOffset: nextOffset });
     };
 
-    // 🗺️ 지도 업로드
+    // 🖼️ 이미지 하나를 "쓸 수 있는 형태"로 만드는 공통 헬퍼.
+    // uploadImage prop이 있으면(협동 세션) 그 함수로 실제 업로드까지 맡기고, 없으면(솔로 모드)
+    // 기존처럼 로컬 base64로만 압축한다 - 호출부(handleMapUpload 등)는 어느 쪽인지 몰라도 된다.
+    const acquireImage = (file, kind, maxWidth, quality) =>
+        uploadImage ? uploadImage(file, { kind, maxWidth, quality }) : compressImage(file, maxWidth, quality);
+
+    // 🗺️ 지도 업로드 (협동 세션에서는 canUploadMap=false인 참가자에게 버튼 자체가 안 보이지만,
+    // 혹시 모를 상황을 대비해 함수 레벨에서도 한 번 더 막는다)
     const handleMapUpload = async (e) => {
+        if (!canUploadMap) { e.target.value = ''; return; }
         const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
 
+        // 이미지 압축/업로드는 파일이 깨져있거나(잘못된 형식) 협동 세션의 네트워크 문제 등으로
+        // 실패할 수 있다 - 하나가 실패해도 Promise.all 전체가 죽어서 나머지 파일까지 조용히 사라지지
+        // 않도록 파일별로 감싸고, 실패하면 사용자에게 원인을 알 수 있는 메시지를 보여준다.
         const readPromises = files.map(async (file) => {
-            const { url, width, height } = await compressImage(file, 1200, 0.7);
-            return {
-                id: Date.now() + Math.random(),
-                name: file.name.replace(/\.[^/.]+$/, ""),
-                url,
-                width,  // AI 지도 비전 조회 시 %좌표를 픽셀로 환산하는 데 사용
-                height
-            };
+            try {
+                const { url, width, height } = await acquireImage(file, 'map', 1200, 0.7);
+                return {
+                    id: Date.now() + Math.random(),
+                    name: file.name.replace(/\.[^/.]+$/, ""),
+                    url,
+                    width,  // AI 지도 비전 조회 시 %좌표를 픽셀로 환산하는 데 사용
+                    height
+                };
+            } catch (err) {
+                console.error('지도 이미지 업로드 실패:', err);
+                return null;
+            }
         });
 
-        const newMaps = await Promise.all(readPromises);
-        const nextMaps = [...maps, ...newMaps];
-        const nextActiveId = !activeMapId && newMaps.length > 0 ? newMaps[0].id : activeMapId;
+        const uploaded = await Promise.all(readPromises);
+        const newMaps = uploaded.filter(Boolean);
+        const failedCount = uploaded.length - newMaps.length;
 
-        setMaps(nextMaps);
-        if (!activeMapId && newMaps.length > 0) setActiveMapId(nextActiveId);
-        notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
+        if (newMaps.length > 0) {
+            const nextMaps = [...maps, ...newMaps];
+            const nextActiveId = !activeMapId ? newMaps[0].id : activeMapId;
+            setMaps(nextMaps);
+            if (!activeMapId) setActiveMapId(nextActiveId);
+            notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
+        }
+        if (failedCount > 0) {
+            window.alert(`지도 업로드에 실패했어요 (${failedCount}개). 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.`);
+        }
         e.target.value = '';
+    };
+
+    // 🗑️ 지도 삭제 - 여러 장 올려둔 지도 중 하나를 목록에서 제거한다.
+    // 지금 보고 있던(활성) 지도를 지웠다면 남은 지도 중 첫 번째로 자동 전환하고, 하나도 안 남으면 "등록된 지도 없음" 상태로 되돌린다.
+    const removeMap = (id) => {
+        const nextMaps = maps.filter(m => m.id !== id);
+        const nextActiveId = activeMapId === id
+            ? (nextMaps.length > 0 ? nextMaps[0].id : null)
+            : activeMapId;
+        setMaps(nextMaps);
+        setActiveMapId(nextActiveId);
+        notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
+    };
+
+    // 🔀 활성 지도 전환
+    const switchActiveMap = (id) => {
+        if (id === activeMapId) return;
+        setActiveMapId(id);
+        notifyParentState({ activeMapId: id });
+    };
+
+    // ✏️ 지도 이름 수정
+    const renameMap = (id, currentName) => {
+        const name = window.prompt('지도 이름을 입력하세요.', currentName || '');
+        if (!name || !name.trim() || name.trim() === currentName) return;
+        const nextMaps = maps.map(m => m.id === id ? { ...m, name: name.trim() } : m);
+        setMaps(nextMaps);
+        notifyParentState({ maps: nextMaps });
+    };
+
+    // ✏️ 토큰/핀 이름 수정 - AI GM은 이 이름으로 위치를 참조하므로, 바꾸면 이후 대화부터 새 이름으로 인식된다
+    const renameToken = (id, currentName) => {
+        const name = window.prompt('이름을 입력하세요.', currentName || '');
+        if (!name || !name.trim() || name.trim() === currentName) return;
+        const nextTokens = tokens.map(t => t.id === id ? { ...t, name: name.trim() } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
     };
 
     // 🎭 토큰 업로드
@@ -301,30 +449,42 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         const centerY = Math.max(0, (boardHeight / 2 - panOffset.y) / scaleFactor - gridSize / 2);
 
         const readPromises = files.map(async (file, idx) => {
-            const { url : compressedUrl } = await compressImage(file, 400, 0.8);
-            const posX = centerX + (idx * 12);
-            const posY = centerY + (idx * 12);
+            try {
+                const { url : compressedUrl } = await acquireImage(file, 'token', 400, 0.8);
+                const posX = centerX + (idx * 12);
+                const posY = centerY + (idx * 12);
 
-            return {
-                id: Date.now() + Math.random(),
-                name: file.name.replace(/\.[^/.]+$/, ""),
-                url: compressedUrl,
-                x: posX,
-                y: posY,
-                gridPos: calculateGridPos(posX, posY, gridSize),
-                size: gridSize,
-                hp: 30,
-                maxHp: 30
-            };
+                return {
+                    id: Date.now() + Math.random(),
+                    name: file.name.replace(/\.[^/.]+$/, ""),
+                    url: compressedUrl,
+                    x: posX,
+                    y: posY,
+                    gridPos: calculateGridPos(posX, posY, gridSize),
+                    size: gridSize,
+                    hp: 30,
+                    maxHp: 30
+                };
+            } catch (err) {
+                console.error('토큰 이미지 업로드 실패:', err);
+                return null;
+            }
         });
 
-        const newTokens = await Promise.all(readPromises);
-        const nextTokens = [...tokens, ...newTokens];
+        const uploaded = await Promise.all(readPromises);
+        const newTokens = uploaded.filter(Boolean);
+        const failedCount = uploaded.length - newTokens.length;
 
-        setTokens(nextTokens);
-        tokensRef.current = nextTokens;
-        if (newTokens.length > 0) setSelectedTokenId(newTokens[newTokens.length - 1].id);
-        notifyParentState({ tokens: nextTokens });
+        if (newTokens.length > 0) {
+            const nextTokens = [...tokens, ...newTokens];
+            setTokens(nextTokens);
+            tokensRef.current = nextTokens;
+            setSelectedTokenId(newTokens[newTokens.length - 1].id);
+            notifyParentState({ tokens: nextTokens });
+        }
+        if (failedCount > 0) {
+            window.alert(`토큰 업로드에 실패했어요 (${failedCount}개). 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.`);
+        }
         e.target.value = '';
     };
 
@@ -589,7 +749,14 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
         pendingImageTokenIdRef.current = null;
         if (!file || tokenId === null) return;
 
-        const { url } = await compressImage(file, 400, 0.8);
+        let url;
+        try {
+            ({ url } = await acquireImage(file, 'token', 400, 0.8));
+        } catch (err) {
+            console.error('토큰 이미지 업로드 실패:', err);
+            window.alert('토큰 이미지 업로드에 실패했어요. 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.');
+            return;
+        }
         const nextTokens = tokensRef.current.map(t => t.id === tokenId ? { ...t, url } : t);
         setTokens(nextTokens);
         tokensRef.current = nextTokens;
@@ -599,6 +766,16 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
     const activeMap = maps.find(m => m.id === activeMapId);
     const selectedToken = tokens.find(t => t.id === selectedTokenId);
     const currentGridStyle = GRID_COLORS[gridColorKey] || GRID_COLORS.amber;
+
+    // 📐 격자 표시 간격 자동 보정 - 격자를 20px처럼 작게 두고 화면 배율까지 축소하면 실제 화면에 보이는 칸 크기가
+    // 몇 픽셀 수준으로 촘촘해져서 눈이 어지러운 촘촘한 줄무늬(모아레)로 보인다. 실제 칸 크기(gridSize, 토큰
+    // 좌표 계산)는 그대로 두고, "화면에 그리는 선"만 2/4/8칸 단위로 건너뛰어 최소 시야 간격을 확보한다.
+    const gridScaleFactor = mapScale / 100;
+    const MIN_VISIBLE_GRID_PX = 22; // 화면에서 격자 한 칸이 이보다 작아지면 다음 단계로 건너뛴다
+    let gridDisplayStep = 1;
+    while (gridSize * gridScaleFactor * gridDisplayStep < MIN_VISIBLE_GRID_PX && gridDisplayStep < 64) {
+        gridDisplayStep *= 2;
+    }
 
     return (
         <div
@@ -680,27 +857,35 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                         {showGrid ? '▦ 격자 켜짐' : '▢ 격자 꺼짐'}
                     </button>
 
-                    {/* 📐 격자 크기 조절 */}
+                    {/* 📐 격자 크기 조절 - 드래그하거나, 위에 마우스를 올리고 휠을 굴려서 조절한다 */}
                     {showGrid && (
-                        <div className="flex items-center gap-1 bg-slate-900/90 px-1.5 py-0.5 rounded border border-amber-500/40 text-xs">
-                            <span className="text-[0.65rem] text-slate-400 font-bold">격자:</span>
-                            <button
-                                type="button"
-                                onClick={() => handleGridSizeChange(-4)}
-                                className="px-1 py-0 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-amber-300 font-bold rounded text-[0.65rem]"
-                            >
-                                -
-                            </button>
-                            <span className="text-[0.7rem] font-mono min-w-[32px] text-center font-bold text-amber-400">
+                        <div
+                            ref={gridSizeControlRef}
+                            className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-0.5 rounded border border-amber-500/40 text-xs"
+                            title="드래그하거나 마우스 휠로 격자 크기를 조절하세요"
+                        >
+                            <span className="text-[0.65rem] text-slate-400 font-bold shrink-0">격자:</span>
+                            <input
+                                type="range"
+                                min={20}
+                                max={200}
+                                step={4}
+                                value={gridSize}
+                                onChange={(e) => setGridSizeClamped(Number(e.target.value))}
+                                className="w-20 accent-amber-500 cursor-pointer"
+                            />
+                            <span className="text-[0.7rem] font-mono min-w-[36px] text-center font-bold text-amber-400 shrink-0">
                                 {gridSize}px
                             </span>
-                            <button
-                                type="button"
-                                onClick={() => handleGridSizeChange(4)}
-                                className="px-1 py-0 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-amber-300 font-bold rounded text-[0.65rem]"
-                            >
-                                +
-                            </button>
+                            {/* 화면 배율까지 낮아 격자를 몇 칸 단위로 건너뛰어 그리고 있을 때만 안내 - 실제 칸 크기는 그대로다 */}
+                            {gridDisplayStep > 1 && (
+                                <span
+                                    className="text-[0.62rem] text-slate-400 font-bold shrink-0 whitespace-nowrap"
+                                    title="화면이 너무 촘촘해지지 않도록 격자를 몇 칸씩 묶어 표시 중입니다. 실제 칸 크기는 그대로입니다."
+                                >
+                                    ({gridDisplayStep}칸씩 표시)
+                                </span>
+                            )}
                         </div>
                     )}
 
@@ -764,12 +949,22 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                             onChange={handlePendingImageChange}
                         />
 
-                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded bg-[var(--primary-color,#4a5568)] text-white hover:opacity-90">
-                            <span>➕ 지도</span>
-                            <input type="file" accept="image/*" multiple className="hidden" onChange={handleMapUpload} />
-                        </label>
+                        {canUploadMap ? (
+                            <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded bg-[var(--primary-color,#4a5568)] text-white hover:opacity-90">
+                                <span>➕ 지도</span>
+                                <input type="file" accept="image/*" multiple className="hidden" onChange={handleMapUpload} />
+                            </label>
+                        ) : (
+                            // 🤝 협동 세션에서 방장이 아니면 지도 배경은 올릴 수 없다(다른 조작은 그대로 가능)
+                            <span
+                                className="text-[0.75rem] font-bold px-2 py-1 rounded border border-slate-700 bg-slate-900/60 text-slate-500"
+                                title="지도 업로드는 방장만 할 수 있어요"
+                            >
+                                🔒 지도(방장 전용)
+                            </span>
+                        )}
 
-                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded text-white hover:opacity-90" style={{ backgroundColor: 'var(--highlight,#3b82f6)' }}>
+                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded text-white hover:opacity-90" style={{ backgroundColor: 'var(--highlight,#8b5cf6)' }}>
                             <span>🎭 토큰</span>
                             <input type="file" accept="image/*" multiple className="hidden" onChange={handleTokenUpload} />
                         </label>
@@ -795,6 +990,52 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                 )}
             </div>
 
+            {/* 🗂️ 지도 목록(탭) - 여러 장을 올려둔 경우 여기서 전환/이름수정/삭제한다. 설정 줄과 달리 플레이 중에도 자주 쓰이므로 모바일 접힘과 무관하게 항상 보여준다. */}
+            {maps.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 shrink-0">
+                    {maps.map((m) => (
+                        <div
+                            key={m.id}
+                            onClick={() => switchActiveMap(m.id)}
+                            className={`flex items-center gap-1 shrink-0 pl-2 pr-1 py-1 rounded-lg border text-[0.7rem] font-bold cursor-pointer transition-all ${
+                                activeMapId === m.id
+                                    ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                            }`}
+                            title={m.name}
+                        >
+                            <span className="truncate max-w-[90px]">🗺️ {m.name || '지도'}</span>
+                            {canUploadMap && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            renameMap(m.id, m.name);
+                                        }}
+                                        className="text-[0.68rem] px-1 rounded hover:bg-black/20 leading-none"
+                                        title="지도 이름 수정"
+                                    >
+                                        ✏️
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (window.confirm(`"${m.name}" 지도를 삭제할까요?`)) removeMap(m.id);
+                                        }}
+                                        className="text-[0.68rem] px-1 rounded hover:bg-black/20 leading-none"
+                                        title="지도 삭제"
+                                    >
+                                        ✕
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+
             {/* 🎮 메인 전투 지도 뷰포트 */}
             <div
                 ref={boardRef}
@@ -809,16 +1050,15 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                 }`}
                 style={{ borderColor: (isPinMode || isAlignMode) ? '#f59e0b' : 'var(--border-color)' }}
             >
-                {/* 🔍 Pan & Zoom 뷰포트 */}
+                {/* 🖼️ 1. 배경 지도 - 확대/축소·이동은 이 레이어의 transform으로만 처리한다 */}
                 <div
-                    className="relative select-none w-full h-full"
+                    className="absolute inset-0 select-none"
                     style={{
                         transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapScale / 100})`,
                         transformOrigin: '0 0',
                         transition: (isPanning || pinchRef.current.active) ? 'none' : 'transform 0.1s ease-out'
                     }}
                 >
-                    {/* 🖼️ 1. 배경 지도 */}
                     {activeMap ? (
                         <div
                             className="absolute left-0 top-0 transition-none pointer-events-none"
@@ -832,23 +1072,40 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                             <p className="text-[0.7rem]">상단 [➕ 지도]를 눌러 이미지 파일을 업로드해 주세요.</p>
                         </div>
                     )}
+                </div>
 
-                    {/* ▦ 2. 격자 오버레이 */}
-                    {showGrid && (
-                        <div
-                            className="absolute inset-0 pointer-events-none z-10 min-w-[3000px] min-h-[3000px]"
-                            style={{
-                                backgroundImage: `
-                                    linear-gradient(to right, ${currentGridStyle.line} 1.5px, transparent 1.5px),
-                                    linear-gradient(to bottom, ${currentGridStyle.line} 1.5px, transparent 1.5px)
-                                `,
-                                backgroundSize: `${gridSize}px ${gridSize}px`,
-                                filter: `drop-shadow(0px 0px 1px ${currentGridStyle.shadow})`
-                            }}
-                        />
-                    )}
+                {/* ▦ 2. 격자 오버레이 - map/token 레이어처럼 transform:scale()로 함께 축소시키면, 브라우저가 래스터화된
+                    1.5px 격자선을 축소 렌더링(민입/앨리어싱)하는 과정에서 표본 지점이 선과 선 사이 투명한 틈에 걸려
+                    격자 전체가 통째로 사라지는 문제가 있다(지도를 일정 크기 이하로 축소했을 때 보고된 현상).
+                    그래서 격자만 transform 밖으로 빼고, 같은 pan/zoom 결과를 backgroundPosition/backgroundSize로 직접
+                    계산해 항상 실제 화면 픽셀 두께(1.5px)로 그린다 - 배율과 무관하게 선이 얇아질 뿐 사라지지는 않는다.
+                    여기에 gridDisplayStep(위에서 계산)을 곱해, 격자가 너무 촘촘해지면 자동으로 2/4/8칸 단위로
+                    건너뛰어 그려서 눈이 어지러운 모아레 줄무늬가 되는 것을 막는다. */}
+                {showGrid && (
+                    <div
+                        className="absolute inset-0 pointer-events-none z-10"
+                        style={{
+                            backgroundImage: `
+                                linear-gradient(to right, ${currentGridStyle.line} 1.5px, transparent 1.5px),
+                                linear-gradient(to bottom, ${currentGridStyle.line} 1.5px, transparent 1.5px)
+                            `,
+                            backgroundSize: `${gridSize * gridScaleFactor * gridDisplayStep}px ${gridSize * gridScaleFactor * gridDisplayStep}px`,
+                            backgroundPosition: `${panOffset.x}px ${panOffset.y}px`,
+                            filter: `drop-shadow(0px 0px 1px ${currentGridStyle.shadow})`,
+                            transition: (isPanning || pinchRef.current.active) ? 'none' : 'background-position 0.1s ease-out, background-size 0.1s ease-out'
+                        }}
+                    />
+                )}
 
-                    {/* 🎭 3. 토큰 레이어 */}
+                {/* 🎭 3. 토큰 레이어 - 지도와 같은 transform을 적용해 함께 움직이되, 격자보다 나중(위)에 그려 항상 격자 위에 보이게 한다 */}
+                <div
+                    className="absolute inset-0 select-none z-20"
+                    style={{
+                        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapScale / 100})`,
+                        transformOrigin: '0 0',
+                        transition: (isPanning || pinchRef.current.active) ? 'none' : 'transform 0.1s ease-out'
+                    }}
+                >
                     {tokens.map((token) => {
                         const isSelected = selectedTokenId === token.id;
                         const size = token.size ?? gridSize;
@@ -891,10 +1148,10 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
 
                                 {/* 토큰 이미지 / 핀(장소 표식) 마커 / AI가 만든 이미지 없는 토큰 플레이스홀더 */}
                                 {token.isPin ? (
-                                    <div className={`w-full h-full rounded-full flex items-center justify-center bg-sky-950/90 text-[0.9em] ${
+                                    <div className={`w-full h-full rounded-full flex items-center justify-center bg-violet-950/90 text-[0.9em] ${
                                         isSelected
                                             ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
-                                            : 'border-2 border-sky-400/80 hover:border-sky-300'
+                                            : 'border-2 border-violet-400/80 hover:border-violet-300'
                                     }`}>
                                         📍
                                     </div>
@@ -940,6 +1197,13 @@ const BattleMapPanel = ({ mapState, onUpdateMapState, isMobile }) => {
                         <div className="flex items-center justify-between border-b border-slate-700/80 pb-1.5">
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-bold text-amber-300">{selectedToken.name}</span>
+                                <button
+                                    onClick={() => renameToken(selectedToken.id, selectedToken.name)}
+                                    className="text-[0.68rem] px-1 rounded hover:bg-white/10 leading-none"
+                                    title="이름 수정"
+                                >
+                                    ✏️
+                                </button>
                                 <span className="text-[0.68rem] bg-amber-950 text-amber-400 px-1.5 py-0.5 rounded border border-amber-800 font-mono font-bold">
                                     좌표: {selectedToken.gridPos || 'A1'}
                                 </span>

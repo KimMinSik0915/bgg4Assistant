@@ -3,7 +3,7 @@
  * GmChatPanel : Gemini와 대화하며 캐릭터 시트를 관리하는 AI GM 채팅 카드
  *  - 상단 "🤝 함께 플레이" 버튼으로 기존 솔로 모드와 Firebase 기반 2인 협동 모드를 전환한다.
  */
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import MultiplayerRoomPanel from './MultiplayerRoomPanel';
 
 const GmChatPanel = ({
@@ -14,8 +14,19 @@ const GmChatPanel = ({
                          , scenarioUrl, mapUrl1, mapUrl2, isFetchLoading, scenarioData
                          , onChangeScenarioUrl, onChangeMapUrl1, onChangeMapUrl2, onLoadScenario
                          , charData
+                         // 🗺️ 협동 세션의 방 접속 상태(입장/퇴장/방장 여부/공유 지도)를 그대로 상위로 전달한다 -
+                         // 메인 화면의 전투지도(BattleMapPanel)가 이 방의 공유 mapState를 그리도록 하기 위함.
+                         , onMultiplayerStateChange
                      }) => {
     const [sessionMode, setSessionMode] = useState('solo'); // 'solo' | 'multi'
+
+    // 💬 새 메시지가 오거나 GM이 응답을 준비할 때 대화창을 맨 아래로 붙여준다.
+    // (이게 없으면 메시지가 쌓여도 스크롤 위치(px)는 그대로라 상대적으로 대화창이
+    //  계속 위로 밀려 올라가는 것처럼 보이는 버그가 생긴다.)
+    const chatEndRef = useRef(null);
+    useEffect(() => {
+        chatEndRef.current?.scrollIntoView({ behavior : 'smooth' });
+    }, [messages, isLoading]);
 
     const handleKeyDown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -50,6 +61,7 @@ const GmChatPanel = ({
                         mapUrl1={mapUrl1}
                         mapUrl2={mapUrl2}
                         charData={charData}
+                        onRoomStateChange={onMultiplayerStateChange}
                     />
                 </div>
             </div>
@@ -207,6 +219,7 @@ const GmChatPanel = ({
                 {isLoading && (
                     <div className="text-xs self-start italic animate-pulse" style={{ color : 'var(--text-muted)' }}>GM이 생각하는 중...</div>
                 )}
+                <div ref={chatEndRef}/>
             </div>
 
             {(attachedFiles || []).length > 0 && (

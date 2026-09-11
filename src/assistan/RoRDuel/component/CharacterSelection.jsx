@@ -42,7 +42,7 @@ class CharacterSelection extends Component {
         const { selectedCharacter } = this.props;
 
         return (
-            <div className="relative bg-slate-950">
+            <div className="relative bg-[#0a0118]">
                 <div className="pointer-events-none absolute inset-0 overflow-hidden">
                     <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-amber-500/10 blur-[120px]" />
                     <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-emerald-600/10 blur-[120px]" />
@@ -51,7 +51,7 @@ class CharacterSelection extends Component {
                 <div className="relative container mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
                     <button
                         onClick={() => this.props.navigate('/')}
-                        className="mb-6 flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-cyan-300"
+                        className="mb-6 flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-purple-300"
                     >
                         <ArrowLeft size={16}/> 홈으로
                     </button>
@@ -73,7 +73,7 @@ class CharacterSelection extends Component {
                                 <button
                                     key={character.krName || character.enName}
                                     onClick={() => this.props.handler.characterSelect(character)}
-                                    className={`group relative aspect-square overflow-hidden rounded-2xl border bg-slate-900/60 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${
+                                    className={`group relative aspect-square overflow-hidden rounded-2xl border bg-[#170a2e]/60 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${
                                         isSelected
                                             ? 'border-amber-400/70 ring-2 ring-amber-400/50'
                                             : 'border-white/10 hover:border-white/25'
@@ -86,7 +86,7 @@ class CharacterSelection extends Component {
                                     />
                                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-transparent" />
                                     {isSelected && (
-                                        <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-slate-950">
+                                        <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-[#0a0118]">
                                             <Check size={13} strokeWidth={3}/>
                                         </span>
                                     )}
@@ -104,7 +104,7 @@ class CharacterSelection extends Component {
                             disabled={!selectedCharacter}
                             className={`rounded-full px-8 py-3 text-sm font-semibold transition-all duration-200 active:scale-95 sm:text-base ${
                                 selectedCharacter
-                                    ? 'bg-gradient-to-r from-amber-400 to-emerald-400 text-slate-950 shadow-lg shadow-amber-500/20 hover:brightness-110'
+                                    ? 'bg-gradient-to-r from-amber-400 to-emerald-400 text-[#0a0118] shadow-lg shadow-amber-500/20 hover:brightness-110'
                                     : 'cursor-not-allowed bg-white/10 text-slate-500'
                             }`}
                         >

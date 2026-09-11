@@ -9,7 +9,7 @@ import "../../characterSheet/resource/CSS/characterSheet.css";
 class Layout extends Component {
 
     state = {
-        backgroundColor : '#020617'
+        backgroundColor : '#0a0118'
     }
 
     constructor(props) {

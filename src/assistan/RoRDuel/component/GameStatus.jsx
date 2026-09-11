@@ -84,7 +84,7 @@ class GameStatus extends Component {
         const allCardsRevealed = revealedCards.length === this.state.actionCards.length;
 
         return (
-            <div className="relative bg-slate-950">
+            <div className="relative bg-[#0a0118]">
                 <div className="pointer-events-none absolute inset-0 overflow-hidden">
                     <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-amber-500/10 blur-[120px]" />
                     <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-emerald-600/10 blur-[120px]" />
@@ -93,7 +93,7 @@ class GameStatus extends Component {
                 <div className="relative container mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
                     <button
                         onClick={() => this.props.navigate('/bandu')}
-                        className="mb-6 flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-cyan-300"
+                        className="mb-6 flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-purple-300"
                     >
                         <ArrowLeft size={16}/> 캐릭터 선택으로
                     </button>
@@ -154,7 +154,7 @@ class GameStatus extends Component {
                     <div className="mt-10 text-center">
                         <button
                             onClick={this.handler.flipCard}
-                            className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-amber-400 to-emerald-400 px-8 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-amber-500/20 transition-all duration-200 hover:brightness-110 active:scale-95 sm:text-base"
+                            className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-amber-400 to-emerald-400 px-8 py-3 text-sm font-semibold text-[#0a0118] shadow-lg shadow-amber-500/20 transition-all duration-200 hover:brightness-110 active:scale-95 sm:text-base"
                         >
                             <Shuffle size={16}/> 다음 카드
                         </button>
