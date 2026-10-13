@@ -43,6 +43,9 @@ class HomeScreen extends Component {
           case "character-sheet":
             this.props.navigate("/character-sheet");
             break;
+          case "earthborne-rangers":
+            this.props.navigate("/earthborne-rangers");
+            break;
           case "settings":
             this.props.navigate("/settings");
             break;
