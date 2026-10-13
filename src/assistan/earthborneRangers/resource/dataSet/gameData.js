@@ -116,6 +116,7 @@ export const INITIAL_CAMPAIGN_STATE = {
     notableEvents: [],
     rewards: [],
     removedCards: [],
+    memo: '',
     dayNotes: {},
     locationHistory: [],
     _undoStack: [],

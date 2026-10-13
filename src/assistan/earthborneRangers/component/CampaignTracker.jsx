@@ -826,6 +826,19 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                     </div>
                 </section>
             </div>
+
+            {/* 메모 */}
+            <section className="rounded-xl border p-4 shadow-md" style={cardStyle}>
+                <h3 className="text-base font-bold mb-3" style={{ color: 'var(--highlight)' }}>MEMO</h3>
+                <textarea
+                    value={campaign.memo || ''}
+                    onChange={(e) => updateField('memo', e.target.value)}
+                    placeholder="자유롭게 메모를 입력하세요..."
+                    rows={4}
+                    className="w-full text-base px-3 py-2.5 rounded-lg border outline-none resize-y focus:ring-1"
+                    style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)', minHeight: '90px' }}
+                />
+            </section>
         </div>
     );
 };
