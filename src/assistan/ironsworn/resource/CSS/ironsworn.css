@@ -1,0 +1,123 @@
+/* Ironsworn 커스텀 스타일 */
+
+.is-scroll::-webkit-scrollbar { width: 5px; }
+.is-scroll::-webkit-scrollbar-track { background: transparent; }
+.is-scroll::-webkit-scrollbar-thumb { background: rgba(217, 119, 6, 0.3); border-radius: 9999px; }
+.is-scroll::-webkit-scrollbar-thumb:hover { background: rgba(217, 119, 6, 0.5); }
+
+.is-fade-in {
+    animation: isFadeIn 0.3s ease-out;
+}
+@keyframes isFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* 진행도 박스 */
+.is-progress-box {
+    width: 28px;
+    height: 28px;
+    border: 2px solid rgba(217, 119, 6, 0.4);
+    border-radius: 4px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background-color 0.2s;
+}
+.is-progress-box:hover {
+    border-color: rgba(217, 119, 6, 0.8);
+}
+.is-progress-box.filled {
+    background: rgba(217, 119, 6, 0.2);
+    border-color: #d97706;
+}
+
+/* 틱 마크 (박스 안 대각선) */
+.is-tick-mark {
+    position: absolute;
+    width: 2px;
+    height: 70%;
+    background: #d97706;
+    transform-origin: center;
+}
+.is-tick-mark.t1 { transform: rotate(-45deg); }
+.is-tick-mark.t2 { transform: rotate(45deg); }
+.is-tick-mark.t3 { transform: rotate(0deg); }
+.is-tick-mark.t4 { transform: rotate(90deg); }
+
+/* 모멘텀 트랙 */
+.is-momentum-track {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+}
+.is-momentum-cell {
+    width: 20px;
+    height: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.is-momentum-cell.active {
+    background: rgba(99, 102, 241, 0.5);
+    border-color: #818cf8;
+    color: white;
+    font-weight: bold;
+}
+.is-momentum-cell.negative {
+    border-color: rgba(239, 68, 68, 0.3);
+}
+.is-momentum-cell.positive {
+    border-color: rgba(99, 102, 241, 0.3);
+}
+
+/* 주사위 결과 표시 */
+.is-dice-result {
+    animation: isDiceReveal 0.4s ease-out;
+}
+@keyframes isDiceReveal {
+    from { transform: scale(0.8); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+.is-strong-hit { color: #34d399; }
+.is-weak-hit { color: #fbbf24; }
+.is-miss { color: #f87171; }
+
+/* 무브 카드 */
+.is-move-card {
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.is-move-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* 상태 트랙 바 */
+.is-status-pip {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.is-status-pip.filled {
+    border-color: currentColor;
+}
+.is-status-pip:hover {
+    transform: scale(1.15);
+}

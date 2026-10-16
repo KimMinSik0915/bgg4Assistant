@@ -38,3 +38,8 @@
 .ebr-aspect-bar {
     transition: width 0.4s cubic-bezier(.34,1.56,.64,1);
 }
+
+.ebr-card-text b {
+    font-size: 0.8125rem;
+    color: var(--text-main);
+}

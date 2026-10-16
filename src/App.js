@@ -14,6 +14,7 @@ const LordOfRingsDuelManager = lazy(() => import("./assistan/RoRDuel/main/LordOf
 const CharacterSheetManager = lazy(() => import("./assistan/characterSheet/main/CharacterSheetManager"));
 const SettingsScreen = lazy(() => import("./assistan/settings/main/SettingsScreen"));
 const EarthborneRangersManager = lazy(() => import("./assistan/earthborneRangers/main/EarthborneRangersManager"));
+const IronswornManager = lazy(() => import("./assistan/ironsworn/main/IronswornManager"));
 
 // 화면 코드가 아직 안 내려와서 잠깐 기다리는 동안 보여줄 아주 가벼운 자리표시자(레이아웃 배경과 톤을 맞춤)
 const RouteLoading = () => (
@@ -33,6 +34,7 @@ function App() {
                         <Route path={'/bandu'} element={<LordOfRingsDuelManager/> } />
                         <Route path={'/character-sheet'} element={<CharacterSheetManager/> } />
                         <Route path={'/earthborne-rangers'} element={<EarthborneRangersManager/> } />
+                        <Route path={'/ironsworn'} element={<IronswornManager/> } />
                         <Route path={'/settings'} element={<SettingsScreen/> } />
                     </Routes>
                 </Suspense>

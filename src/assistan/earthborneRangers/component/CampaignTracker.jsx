@@ -1,12 +1,48 @@
 import { useState } from 'react';
 import { PlusIcon, XIcon, BookOpenIcon, Undo2Icon, CompassIcon, TentIcon, ScrollTextIcon } from 'lucide-react';
-import { CAMPAIGNS, WEATHER_TYPES } from '../resource/dataSet/gameData';
+import { CAMPAIGNS, WEATHER_TYPES, getMoonInfo, VALLEY_NODES, VALLEY_REGIONS, LOCATION_ICON, TERRAIN_ICON, SPECIALTIES, BACKGROUNDS } from '../resource/dataSet/gameData';
+
+const MoonIcon = ({ pct, size = 14 }) => {
+    const abs = Math.abs(pct);
+    const waning = pct < 0;
+    const r = 9;
+
+    if (abs === 0) {
+        return (
+            <svg viewBox="0 0 20 20" width={size} height={size}>
+                <circle cx="10" cy="10" r={r} fill="#1a1a2e" stroke="#555" strokeWidth="0.8" />
+            </svg>
+        );
+    }
+    if (abs === 100) {
+        return (
+            <svg viewBox="0 0 20 20" width={size} height={size}>
+                <circle cx="10" cy="10" r={r} fill="#f5f0c1" stroke="#d4c96a" strokeWidth="0.5" />
+            </svg>
+        );
+    }
+
+    const k = abs / 50 - 1;
+    const rx = Math.max(0.1, Math.abs(k) * r);
+    const sweep = abs < 50 ? 0 : 1;
+    const path = `M 10 ${10 - r} A ${r} ${r} 0 0 1 10 ${10 + r} A ${rx} ${r} 0 0 ${sweep} 10 ${10 - r}`;
+
+    return (
+        <svg viewBox="0 0 20 20" width={size} height={size} style={waning ? { transform: 'scaleX(-1)' } : undefined}>
+            <circle cx="10" cy="10" r={r} fill="#1a1a2e" stroke="#555" strokeWidth="0.5" />
+            <path d={path} fill="#f5f0c1" />
+        </svg>
+    );
+};
 
 /**
  * @Author : 김민식
  * CampaignTracker : 어스본레인져스 캠페인 트래커 (공식 시트 기반)
  */
-const CampaignTracker = ({ campaign, onUpdate }) => {
+const ROLE_ICO = '/assets/icons/ebr/role';
+const getRoleThumb = (nameEn) => nameEn ? nameEn.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/ +/g, '_') : '';
+
+const CampaignTracker = ({ campaign, onUpdate, decks = [], allCards = [] }) => {
     const [selectedDay, setSelectedDay] = useState(null);
     const [showTravelModal, setShowTravelModal] = useState(false);
     const [travelForm, setTravelForm] = useState({ location: '', pathTerrain: '', camp: false });
@@ -14,6 +50,10 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
     const [missionForm, setMissionForm] = useState({ day: 1, name: '', progress: 0, completed: false });
     const [showTravelHistory, setShowTravelHistory] = useState(false);
     const [activeInfoTab, setActiveInfoTab] = useState('missions');
+    const [locationSearch, setLocationSearch] = useState('');
+    const [showLocationDropdown, setShowLocationDropdown] = useState(false);
+    const [terrainSearch, setTerrainSearch] = useState('');
+    const [showTerrainDropdown, setShowTerrainDropdown] = useState(false);
 
     const updateField = (field, value) => {
         onUpdate({ ...campaign, [field]: value });
@@ -25,20 +65,21 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
     const locationHistory = campaign.locationHistory || [];
     const undoStack = campaign._undoStack || [];
 
-    const addRanger = () => {
-        if (campaign.rangers.length >= 4) return;
-        updateField('rangers', [...campaign.rangers, '']);
+    const [showRangerPicker, setShowRangerPicker] = useState(false);
+
+    const rangers = campaign.rangers || [];
+
+    const addRangerFromDeck = (deckIdx) => {
+        if (rangers.length >= 4) return;
+        updateField('rangers', [...rangers, { deckIndex: deckIdx }]);
+        setShowRangerPicker(false);
     };
 
     const removeRanger = (idx) => {
-        if (campaign.rangers.length <= 1) return;
-        updateField('rangers', campaign.rangers.filter((_, i) => i !== idx));
+        updateField('rangers', rangers.filter((_, i) => i !== idx));
     };
 
-    const updateRanger = (idx, value) => {
-        const next = campaign.rangers.map((r, i) => i === idx ? value : r);
-        updateField('rangers', next);
-    };
+    const linkedDeckIndices = rangers.filter(r => r && typeof r === 'object').map(r => r.deckIndex);
 
     const addMission = () => {
         updateField('missions', [...campaign.missions, { day: campaign.currentDay, name: '', progress: 0, completed: false }]);
@@ -71,10 +112,12 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
     };
 
     const addNotableEvent = () => {
-        const text = window.prompt('주목할 사건을 입력하세요:');
-        if (text && text.trim()) {
-            updateField('notableEvents', [...campaign.notableEvents, text.trim()]);
-        }
+        updateField('notableEvents', [...campaign.notableEvents, '']);
+    };
+
+    const updateNotableEvent = (idx, value) => {
+        const next = campaign.notableEvents.map((e, i) => i === idx ? value : e);
+        updateField('notableEvents', next);
     };
 
     const removeNotableEvent = (idx) => {
@@ -82,10 +125,12 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
     };
 
     const addReward = () => {
-        const text = window.prompt('보상을 입력하세요:');
-        if (text && text.trim()) {
-            updateField('rewards', [...campaign.rewards, text.trim()]);
-        }
+        updateField('rewards', [...campaign.rewards, '']);
+    };
+
+    const updateReward = (idx, value) => {
+        const next = campaign.rewards.map((r, i) => i === idx ? value : r);
+        updateField('rewards', next);
     };
 
     const removeReward = (idx) => {
@@ -93,14 +138,29 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
     };
 
     const addRemovedCard = () => {
-        const text = window.prompt('제거된 카드를 입력하세요:');
-        if (text && text.trim()) {
-            updateField('removedCards', [...(campaign.removedCards || []), text.trim()]);
-        }
+        updateField('removedCards', [...(campaign.removedCards || []), '']);
+    };
+
+    const updateRemovedCard = (idx, value) => {
+        const next = (campaign.removedCards || []).map((c, i) => i === idx ? value : c);
+        updateField('removedCards', next);
     };
 
     const removeRemovedCard = (idx) => {
         updateField('removedCards', (campaign.removedCards || []).filter((_, i) => i !== idx));
+    };
+
+    const addMemo = () => {
+        updateField('memos', [...(campaign.memos || []), '']);
+    };
+
+    const updateMemo = (idx, value) => {
+        const next = (campaign.memos || []).map((m, i) => i === idx ? value : m);
+        updateField('memos', next);
+    };
+
+    const removeMemo = (idx) => {
+        updateField('memos', (campaign.memos || []).filter((_, i) => i !== idx));
     };
 
     const updateDayNote = (day, text) => {
@@ -111,12 +171,15 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
     };
 
     const handleDayClick = (day) => {
-        updateField('currentDay', day);
         setSelectedDay(prev => prev === day ? null : day);
     };
 
     const openTravelModal = () => {
-        setTravelForm({ location: campaign.location || '', pathTerrain: campaign.pathTerrain || '', camp: false });
+        setTravelForm({ location: '', pathTerrain: '', camp: false });
+        setLocationSearch('');
+        setShowLocationDropdown(false);
+        setTerrainSearch('');
+        setShowTerrainDropdown(false);
         setShowTravelModal(true);
     };
 
@@ -205,33 +268,133 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                         className="w-full max-w-md rounded-xl border p-5 shadow-2xl ebr-fade-in"
                         style={{ background: 'var(--bg-color)', borderColor: 'var(--accent-color)' }}
                     >
-                        <h3 className="text-lg font-bold mb-4 flex items-center gap-2" style={{ color: 'var(--highlight)' }}>
-                            <CompassIcon className="h-5 w-5" style={{ color: 'var(--accent-color)' }} />
-                            여행 — Day {campaign.currentDay}
-                        </h3>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-bold flex items-center gap-2" style={{ color: 'var(--highlight)' }}>
+                                <CompassIcon className="h-5 w-5" style={{ color: 'var(--accent-color)' }} />
+                                여행 — Day {campaign.currentDay}
+                            </h3>
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={travelForm.freeTravel || false}
+                                    onChange={(e) => setTravelForm(f => ({ ...f, freeTravel: e.target.checked }))}
+                                    className="w-4 h-4 rounded accent-purple-500"
+                                />
+                                <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>자유여행</span>
+                            </label>
+                        </div>
                         <div className="flex flex-col gap-3">
-                            <div>
-                                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: 'var(--text-muted)' }}>장소 (Location)</label>
+                            <div className="relative">
+                                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: 'var(--text-muted)' }}>목적지 (Destination)</label>
                                 <input
                                     type="text"
-                                    value={travelForm.location}
-                                    onChange={(e) => setTravelForm(f => ({ ...f, location: e.target.value }))}
-                                    placeholder="이동할 장소를 입력하세요"
+                                    value={locationSearch}
+                                    onChange={(e) => { setLocationSearch(e.target.value); setShowLocationDropdown(true); }}
+                                    onFocus={() => setShowLocationDropdown(true)}
+                                    onBlur={() => setTimeout(() => setShowLocationDropdown(false), 150)}
+                                    placeholder="장소 검색 또는 선택"
                                     className="w-full text-base px-3 py-2.5 rounded-lg border outline-none focus:ring-1"
                                     style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)' }}
-                                    autoFocus
                                 />
+                                {travelForm.location && (
+                                    <div className="mt-1 text-xs px-1 flex items-center gap-1.5" style={{ color: 'var(--accent-color)' }}>
+                                        {LOCATION_ICON[travelForm.location] && <img src={LOCATION_ICON[travelForm.location]} alt="" className="h-7 w-7 object-contain" />}
+                                        선택됨: {travelForm.location}
+                                    </div>
+                                )}
+                                {showLocationDropdown && (() => {
+                                    const curNode = VALLEY_NODES.find(n => n.name === campaign.location);
+                                    const query = locationSearch.trim().toLowerCase();
+                                    const filtered = VALLEY_NODES.filter(n =>
+                                        n.name.toLowerCase().includes(query) || n.en.toLowerCase().includes(query)
+                                    );
+                                    const getPathTerrain = (destName) => {
+                                        const forward = curNode?.paths.find(p => p.to === destName);
+                                        if (forward) return forward.terrain;
+                                        const destNode = VALLEY_NODES.find(n => n.name === destName);
+                                        const reverse = destNode?.paths.find(p => p.to === campaign.location);
+                                        return reverse?.terrain || '';
+                                    };
+                                    const connected = travelForm.freeTravel
+                                        ? filtered
+                                        : (curNode ? filtered.filter(n => curNode.paths.some(p => p.to === n.name)) : filtered);
+                                    const selectNode = (node) => {
+                                        const terrain = getPathTerrain(node.name);
+                                        setTravelForm(f => ({ ...f, location: node.name, pathTerrain: terrain }));
+                                        setLocationSearch(node.name);
+                                        setShowLocationDropdown(false);
+                                    };
+                                    return (
+                                        <div className="absolute left-0 right-0 mt-1 rounded-lg border shadow-lg overflow-y-auto z-10"
+                                            style={{ background: 'var(--bg-color)', borderColor: 'var(--border-color)', maxHeight: '200px' }}>
+                                            {connected.length > 0 ? connected.map(node => (
+                                                <button key={node.name} className="w-full text-left px-3 py-2 text-sm hover:bg-white/10 transition-colors flex items-center justify-between"
+                                                    style={{ color: 'var(--text-main)' }}
+                                                    onClick={() => selectNode(node)}>
+                                                    <span className="flex items-center gap-2">
+                                                        {LOCATION_ICON[node.name] && <img src={LOCATION_ICON[node.name]} alt="" className="h-8 w-8 object-contain" />}
+                                                        {node.name}
+                                                    </span>
+                                                    <span className="flex items-center gap-1.5" style={{ color: 'var(--accent-color)' }}>
+                                                        {TERRAIN_ICON[getPathTerrain(node.name)] && <img src={TERRAIN_ICON[getPathTerrain(node.name)]} alt="" className="h-7 w-7 object-contain" />}
+                                                        {getPathTerrain(node.name)}
+                                                    </span>
+                                                </button>
+                                            )) : (
+                                                <div className="px-3 py-2 text-sm" style={{ color: 'var(--text-muted)' }}>검색 결과 없음</div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
-                            <div>
+                            <div className="relative">
                                 <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: 'var(--text-muted)' }}>경로 (Path Terrain)</label>
-                                <input
-                                    type="text"
-                                    value={travelForm.pathTerrain}
-                                    onChange={(e) => setTravelForm(f => ({ ...f, pathTerrain: e.target.value }))}
-                                    placeholder="경로/지형을 입력하세요"
-                                    className="w-full text-base px-3 py-2.5 rounded-lg border outline-none focus:ring-1"
-                                    style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)' }}
-                                />
+                                {travelForm.freeTravel ? (
+                                    <>
+                                        <input
+                                            type="text"
+                                            value={terrainSearch}
+                                            onChange={(e) => { setTerrainSearch(e.target.value); setShowTerrainDropdown(true); }}
+                                            onFocus={() => setShowTerrainDropdown(true)}
+                                            onBlur={() => setTimeout(() => setShowTerrainDropdown(false), 150)}
+                                            placeholder="경로 검색 또는 선택"
+                                            className="w-full text-base px-3 py-2.5 rounded-lg border outline-none focus:ring-1"
+                                            style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)' }}
+                                        />
+                                        {travelForm.pathTerrain && (
+                                            <div className="mt-1 text-xs px-1 flex items-center gap-1.5" style={{ color: 'var(--accent-color)' }}>
+                                                {TERRAIN_ICON[travelForm.pathTerrain] && <img src={TERRAIN_ICON[travelForm.pathTerrain]} alt="" className="h-6 w-6 object-contain" />}
+                                                선택됨: {travelForm.pathTerrain}
+                                            </div>
+                                        )}
+                                        {showTerrainDropdown && (() => {
+                                            const terrains = ['고목림', '산길', '숲', '호숫가', '풀밭', '협곡', '늪지', '강'];
+                                            const query = terrainSearch.trim().toLowerCase();
+                                            const filtered = terrains.filter(t => t.includes(query));
+                                            return (
+                                                <div className="absolute left-0 right-0 mt-1 rounded-lg border shadow-lg overflow-y-auto z-10"
+                                                    style={{ background: 'var(--bg-color)', borderColor: 'var(--border-color)', maxHeight: '200px' }}>
+                                                    {filtered.length > 0 ? filtered.map(t => (
+                                                        <button key={t} className="w-full text-left px-3 py-2 text-sm hover:bg-white/10 transition-colors flex items-center gap-2"
+                                                            style={{ color: 'var(--text-main)' }}
+                                                            onClick={() => { setTravelForm(f => ({ ...f, pathTerrain: t })); setTerrainSearch(t); setShowTerrainDropdown(false); }}>
+                                                            {TERRAIN_ICON[t] && <img src={TERRAIN_ICON[t]} alt="" className="h-7 w-7 object-contain" />}
+                                                            {t}
+                                                        </button>
+                                                    )) : (
+                                                        <div className="px-3 py-2 text-sm" style={{ color: 'var(--text-muted)' }}>검색 결과 없음</div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+                                    </>
+                                ) : (
+                                    <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border text-base"
+                                        style={{ ...inputStyle, opacity: 0.7 }}>
+                                        {TERRAIN_ICON[travelForm.pathTerrain] && <img src={TERRAIN_ICON[travelForm.pathTerrain]} alt="" className="h-7 w-7 object-contain" />}
+                                        {travelForm.pathTerrain || '경로/지형'}
+                                    </div>
+                                )}
                             </div>
                             <label className="flex items-center gap-2.5 cursor-pointer py-1.5">
                                 <input
@@ -401,7 +564,8 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                                         </span>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2">
-                                                <span className="text-base font-medium" style={{ color: 'var(--text-main)' }}>
+                                                <span className="text-base font-medium flex items-center gap-2" style={{ color: 'var(--text-main)' }}>
+                                                    {LOCATION_ICON[entry.location] && <img src={LOCATION_ICON[entry.location]} alt="" className="h-8 w-8 object-contain" />}
                                                     {entry.location || '(장소 없음)'}
                                                 </span>
                                                 {entry.camp && (
@@ -411,7 +575,8 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                                                 )}
                                             </div>
                                             {entry.pathTerrain && (
-                                                <span className="text-sm block mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                                <span className="text-sm flex items-center gap-1.5 mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                                    {TERRAIN_ICON[entry.pathTerrain] && <img src={TERRAIN_ICON[entry.pathTerrain]} alt="" className="h-6 w-6 object-contain" />}
                                                     경로: {entry.pathTerrain}
                                                 </span>
                                             )}
@@ -467,116 +632,87 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                         </button>
                     ))}
                 </div>
-                {currentWeather.key !== 'none' && (
-                    <div className="flex items-center gap-2 text-sm lg:text-base text-white/80">
-                        <span className="text-xl">{currentWeather.icon}</span>
-                        <span className="font-medium">{currentWeather.label} ({currentWeather.en})</span>
-                    </div>
-                )}
             </header>
 
             {/* Day Track 1-30 */}
             <section className="rounded-xl border p-4 shadow-md" style={cardStyle}>
-                <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-base font-bold" style={{ color: 'var(--highlight)' }}>
-                        Day Track
-                        {campaignDef.guideRef && (
-                            <span className="text-xs font-normal ml-2" style={{ color: 'var(--text-muted)' }}>
-                                Guide Ref: {campaignDef.guideRef}
-                            </span>
-                        )}
-                    </h3>
-                    <div className="flex items-center gap-1.5">
-                        <button
-                            onClick={() => setShowTravelHistory(true)}
-                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-bold transition-all hover:bg-white/5"
-                            style={{ borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}
-                            title="여행 기록 보기"
-                        >
-                            <ScrollTextIcon className="h-4 w-4" />
-                            여행기록
-                        </button>
-                        <button
-                            onClick={handleCamp}
-                            disabled={campaign.currentDay >= totalDays}
-                            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border text-sm font-bold transition-all hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed"
-                            style={{ borderColor: 'var(--accent-color)', color: 'var(--accent-color)' }}
-                            title="야영 — 하루가 지나갑니다"
-                        >
-                            <TentIcon className="h-4 w-4" />
-                            야영
-                        </button>
-                        <button
-                            onClick={openTravelModal}
-                            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-bold transition-all hover:opacity-90"
-                            style={{ background: 'var(--accent-color)', color: '#fff' }}
-                        >
-                            <CompassIcon className="h-4 w-4" />
-                            여행
-                        </button>
-                        <button
-                            onClick={handleUndo}
-                            disabled={undoStack.length === 0}
-                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-bold transition-all hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed"
-                            style={{ borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}
-                            title="마지막 작업 되돌리기"
-                        >
-                            <Undo2Icon className="h-4 w-4" />
-                            되돌리기
-                        </button>
-                    </div>
-                </div>
+                <h3 className="text-base font-bold mb-3" style={{ color: 'var(--highlight)' }}>
+                    Day Track
+                </h3>
                 <div className="overflow-x-auto ebr-scroll pb-2">
-                    <div className="flex gap-1" style={{ minWidth: `${totalDays * 48}px` }}>
-                        {Array.from({ length: totalDays }, (_, i) => {
-                            const day = i + 1;
-                            const weatherKey = campaignDef.weather[i] || 'none';
-                            const weather = WEATHER_TYPES[weatherKey] || WEATHER_TYPES.none;
-                            const isCurrent = day === campaign.currentDay;
-                            const isPast = day < campaign.currentDay;
-                            const isSelected = day === selectedDay;
-                            const hasWeather = weatherKey !== 'none';
-                            const hasStoryRef = !!storyRefs[day];
-                            const hasNote = !!(dayNotes[day] && dayNotes[day].trim());
-                            return (
-                                <button
-                                    key={day}
-                                    onClick={() => handleDayClick(day)}
-                                    className="flex flex-col items-center gap-0.5 transition-all shrink-0"
-                                    style={{ width: '46px' }}
-                                    title={`Day ${day}${hasWeather ? `: ${weather.label}` : ''}${hasStoryRef ? ` | 가이드: ${storyRefs[day]}` : ''}`}
-                                >
-                                    <span className="text-[10px] h-4 flex items-center justify-center font-medium" style={{ color: hasStoryRef ? 'var(--accent-color)' : 'transparent' }}>
-                                        {hasStoryRef ? `📖${storyRefs[day]}` : '·'}
-                                    </span>
-                                    <span className="text-sm h-5 flex items-center justify-center">
-                                        {hasWeather ? weather.icon : ''}
-                                    </span>
-                                    <span
-                                        className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all"
-                                        style={{
-                                            background: isCurrent ? 'var(--accent-color)'
-                                                : isPast ? 'var(--tag-bg)' : 'transparent',
-                                            borderColor: isSelected ? 'var(--highlight)'
-                                                : isCurrent ? 'var(--highlight)'
-                                                : hasWeather ? 'var(--accent-color)' : 'var(--border-color)',
-                                            color: isCurrent ? '#fff'
-                                                : isPast ? 'var(--text-muted)' : 'var(--text-main)',
-                                            opacity: isPast ? 0.5 : 1,
-                                            boxShadow: isSelected ? '0 0 8px var(--accent-color)' : 'none',
-                                        }}
+                    <div style={{ minWidth: `${totalDays * 48}px` }}>
+                        <div className="flex gap-1">
+                            {Array.from({ length: totalDays }, (_, i) => {
+                                const day = i + 1;
+                                const isCurrent = day === campaign.currentDay;
+                                const isPast = day < campaign.currentDay;
+                                const isSelected = day === selectedDay;
+                                const hasStoryRef = !!storyRefs[day];
+                                const hasNote = !!(dayNotes[day] && dayNotes[day].trim());
+                                const moonPct = campaignDef.moon ? campaignDef.moon[i] : null;
+                                const moonInfo = moonPct !== null && moonPct !== undefined ? getMoonInfo(moonPct) : null;
+                                return (
+                                    <button
+                                        key={day}
+                                        onClick={() => handleDayClick(day)}
+                                        className="flex flex-col items-center gap-0.5 transition-all shrink-0"
+                                        style={{ width: '46px', minWidth: '46px' }}
+                                        title={`Day ${day}${moonInfo ? ` | ${moonInfo.label}` : ''}${hasStoryRef ? ` | 가이드: ${storyRefs[day]}` : ''}`}
                                     >
-                                        {day}
-                                    </span>
-                                    <span className="text-[9px] leading-tight text-center h-5 overflow-hidden" style={{ color: 'var(--text-muted)', width: '46px' }}>
-                                        {hasWeather ? weather.label : ''}
-                                    </span>
-                                    {hasNote && (
-                                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--accent-color)' }} />
-                                    )}
-                                </button>
-                            );
-                        })}
+                                        <span className="text-[10px] h-4 flex items-center justify-center font-medium" style={{ color: hasStoryRef ? 'var(--accent-color)' : 'transparent' }}>
+                                            {hasStoryRef ? `📖${storyRefs[day]}` : '·'}
+                                        </span>
+                                        <span
+                                            className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all relative overflow-hidden"
+                                            style={{
+                                                borderColor: isSelected ? 'var(--highlight)'
+                                                    : isCurrent ? 'var(--highlight)' : 'var(--border-color)',
+                                                opacity: isPast ? 0.5 : 1,
+                                                boxShadow: isSelected ? '0 0 8px var(--accent-color)' : 'none',
+                                            }}
+                                        >
+                                            {moonPct !== null && moonPct !== undefined && (
+                                                <span className="absolute inset-0 flex items-center justify-center">
+                                                    <MoonIcon pct={moonPct} size={34} />
+                                                </span>
+                                            )}
+                                            <span className="relative" style={{
+                                                color: isCurrent ? '#fff' : isPast ? 'var(--text-muted)' : 'var(--text-main)',
+                                                textShadow: moonPct !== null && moonPct !== undefined
+                                                    ? '0 0 4px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,0.8)' : 'none',
+                                            }}>
+                                                {day}
+                                            </span>
+                                            {hasNote && (
+                                                <span className="absolute bottom-0.5 right-0.5 w-2 h-2 rounded-full" style={{ background: 'var(--accent-color)', border: '1px solid rgba(0,0,0,0.3)' }} />
+                                            )}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        {campaignDef.weatherRanges && (
+                            <div className="flex gap-1 mt-1">
+                                {campaignDef.weatherRanges.map((range, idx) => {
+                                    const numDays = range.end - range.start + 1;
+                                    const width = numDays * 50 - 4;
+                                    const w = WEATHER_TYPES[range.weather] || WEATHER_TYPES.none;
+                                    return (
+                                        <div key={idx} className="shrink-0" style={{ width: `${width}px` }}>
+                                            <div className="text-center text-[10px] font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                                                {w.label}
+                                            </div>
+                                            <div style={{
+                                                borderBottom: '2px solid var(--text-muted)',
+                                                borderLeft: '2px solid var(--text-muted)',
+                                                borderRight: '2px solid var(--text-muted)',
+                                                height: '8px',
+                                            }} />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -593,15 +729,6 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                                     가이드 참조: {storyRefs[selectedDay]}
                                 </span>
                             )}
-                            {(() => {
-                                const wk = campaignDef.weather[selectedDay - 1] || 'none';
-                                const w = WEATHER_TYPES[wk];
-                                return wk !== 'none' ? (
-                                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'var(--tag-bg)', color: 'var(--text-muted)' }}>
-                                        {w.icon} {w.label}
-                                    </span>
-                                ) : null;
-                            })()}
                         </div>
                         <textarea
                             value={dayNotes[selectedDay] || ''}
@@ -613,6 +740,62 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                         />
                     </div>
                 )}
+
+            </section>
+
+            {/* 현재 위치 */}
+            <section className="rounded-xl border p-4 shadow-md" style={cardStyle}>
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <h3 className="text-base font-bold" style={{ color: 'var(--highlight)' }}>현재 위치</h3>
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            onClick={() => setShowTravelHistory(true)}
+                            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs sm:text-sm font-bold transition-all hover:bg-white/5 whitespace-nowrap"
+                            style={{ borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}
+                        >
+                            <ScrollTextIcon className="h-3.5 sm:h-4 w-3.5 sm:w-4 shrink-0" />
+                            <span className="hidden sm:inline">여행기록</span>
+                            <span className="sm:hidden">기록</span>
+                        </button>
+                        <button
+                            onClick={openTravelModal}
+                            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all hover:opacity-90 whitespace-nowrap"
+                            style={{ background: 'var(--accent-color)', color: '#fff' }}
+                        >
+                            <CompassIcon className="h-3.5 sm:h-4 w-3.5 sm:w-4 shrink-0" />
+                            여행
+                        </button>
+                        <button
+                            onClick={handleCamp}
+                            disabled={campaign.currentDay >= totalDays}
+                            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs sm:text-sm font-bold transition-all hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
+                            style={{ borderColor: 'var(--accent-color)', color: 'var(--accent-color)' }}
+                        >
+                            <TentIcon className="h-3.5 sm:h-4 w-3.5 sm:w-4 shrink-0" />
+                            야영
+                        </button>
+                        <button
+                            onClick={handleUndo}
+                            disabled={undoStack.length === 0}
+                            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs sm:text-sm font-bold transition-all hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
+                            style={{ borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}
+                        >
+                            <Undo2Icon className="h-3.5 sm:h-4 w-3.5 sm:w-4 shrink-0" />
+                            <span className="hidden sm:inline">되돌리기</span>
+                            <span className="sm:hidden">되돌리기</span>
+                        </button>
+                    </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                    <span className="flex items-center gap-2 text-base font-medium" style={{ color: 'var(--text-main)' }}>
+                        {LOCATION_ICON[campaign.location] && <img src={LOCATION_ICON[campaign.location]} alt="" className="h-10 w-10 object-contain" />}
+                        {campaign.location || '-'}
+                    </span>
+                    <span className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+                        {TERRAIN_ICON[campaign.pathTerrain] && <img src={TERRAIN_ICON[campaign.pathTerrain]} alt="" className="h-9 w-9 object-contain" />}
+                        {campaign.pathTerrain || '-'}
+                    </span>
+                </div>
             </section>
 
             {/* 2열 그리드 레이아웃 (데스크톱) */}
@@ -621,31 +804,117 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                 <section className="rounded-xl border p-4 shadow-md" style={cardStyle}>
                     <div className="flex items-center justify-between mb-3">
                         <h3 className="text-base font-bold" style={{ color: 'var(--highlight)' }}>RANGERS</h3>
-                        {campaign.rangers.length < 4 && (
-                            <button onClick={addRanger} className="p-1.5 rounded-md hover:bg-white/10 transition-colors" style={{ color: 'var(--clickable)' }}>
+                        {rangers.length < 4 && decks.length > 0 && (
+                            <button onClick={() => setShowRangerPicker(true)} className="p-1.5 rounded-md hover:bg-white/10 transition-colors" style={{ color: 'var(--clickable)' }}>
                                 <PlusIcon className="h-5 w-5" />
                             </button>
                         )}
                     </div>
                     <div className="flex flex-col gap-2">
-                        {campaign.rangers.map((name, idx) => (
-                            <div key={idx} className="flex items-center gap-2">
-                                <input
-                                    type="text"
-                                    value={name}
-                                    onChange={(e) => updateRanger(idx, e.target.value)}
-                                    placeholder={`Ranger ${idx + 1}`}
-                                    className="flex-1 text-base px-3 py-2 rounded-lg border outline-none focus:ring-1"
-                                    style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)' }}
-                                />
-                                {campaign.rangers.length > 1 && (
-                                    <button onClick={() => removeRanger(idx)} className="p-1.5 rounded-md hover:bg-white/10 transition-colors" style={{ color: 'var(--danger)' }}>
-                                        <XIcon className="h-4 w-4" />
+                        {rangers.map((r, idx) => {
+                            const d = typeof r === 'object' ? decks[r.deckIndex] : null;
+                            if (!d) {
+                                return (
+                                    <div key={idx} className="flex items-center gap-2 py-2 px-3 rounded-lg border" style={{ borderColor: 'var(--border-color)', background: 'var(--input-bg)' }}>
+                                        <span className="flex-1 text-sm" style={{ color: 'var(--text-muted)' }}>{typeof r === 'string' ? r : '삭제된 덱'}</span>
+                                        <button onClick={() => removeRanger(idx)} className="p-1 rounded-md hover:bg-white/10 transition-colors" style={{ color: 'var(--danger)' }}>
+                                            <XIcon className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
+                                );
+                            }
+                            const spec = SPECIALTIES.find(s => s.key === d.specialty);
+                            const bg = BACKGROUNDS.find(b => b.key === d.background);
+                            const roleCard = d.specialtyRole
+                                ? allCards.find(c => c.id === d.specialtyRole)
+                                : null;
+                            const roleName = roleCard ? (roleCard.name_ko || roleCard.name_en) : d.specialtyRole;
+                            const roleThumb = roleCard?.name_en ? getRoleThumb(roleCard.name_en) : '';
+                            return (
+                                <div key={idx} className="flex items-center gap-3 py-2 px-3 rounded-lg border" style={{ borderColor: 'var(--border-color)', background: 'var(--input-bg)' }}>
+                                    {roleThumb && (
+                                        <img
+                                            src={`${ROLE_ICO}/${roleThumb}.png`}
+                                            alt={roleName}
+                                            className="shrink-0 w-10 h-10 rounded-lg object-cover"
+                                            style={{ border: '2px solid var(--accent-color)' }}
+                                            onError={(e) => { e.target.style.display = 'none'; }}
+                                        />
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <span className="text-sm font-bold block" style={{ color: 'var(--text-main)' }}>{d.rangerName || `레인져 ${r.deckIndex + 1}`}</span>
+                                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                            {d.specialtyRole && <span className="text-[10px]" style={{ color: 'var(--accent-color)' }}>{roleName}</span>}
+                                            {spec && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: 'var(--tag-bg)', color: 'var(--text-muted)' }}>{spec.label}</span>}
+                                            {bg && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: 'var(--tag-bg)', color: 'var(--text-muted)' }}>{bg.label}</span>}
+                                        </div>
+                                    </div>
+                                    <button onClick={() => removeRanger(idx)} className="p-1 rounded-md hover:bg-white/10 transition-colors" style={{ color: 'var(--danger)' }}>
+                                        <XIcon className="h-3.5 w-3.5" />
                                     </button>
-                                )}
-                            </div>
-                        ))}
+                                </div>
+                            );
+                        })}
+                        {rangers.length === 0 && (
+                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>덱 관리에서 레인저를 만든 후 추가하세요</span>
+                        )}
                     </div>
+
+                    {/* 레인저 선택 모달 */}
+                    {showRangerPicker && (
+                        <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-color)' }}>
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-bold" style={{ color: 'var(--text-muted)' }}>덱에서 레인저 선택</span>
+                                <button onClick={() => setShowRangerPicker(false)} className="p-1 rounded-md hover:bg-white/10 transition-colors" style={{ color: 'var(--text-muted)' }}>
+                                    <XIcon className="h-3.5 w-3.5" />
+                                </button>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                {decks.map((d, dIdx) => {
+                                    const already = linkedDeckIndices.includes(dIdx);
+                                    const spec = SPECIALTIES.find(s => s.key === d.specialty);
+                                    const bg = BACKGROUNDS.find(b => b.key === d.background);
+                                    const roleCard = d.specialtyRole
+                                        ? allCards.find(c => c.id === d.specialtyRole)
+                                        : null;
+                                    const pickerRoleName = roleCard ? (roleCard.name_ko || roleCard.name_en) : d.specialtyRole;
+                                    const roleThumb = roleCard?.name_en ? getRoleThumb(roleCard.name_en) : '';
+                                    return (
+                                        <button
+                                            key={dIdx}
+                                            onClick={() => !already && addRangerFromDeck(dIdx)}
+                                            className="flex items-center gap-3 py-2 px-3 rounded-lg border text-left transition-all"
+                                            style={{
+                                                borderColor: already ? 'var(--accent-color)' : 'var(--border-color)',
+                                                background: already ? 'var(--accent-color)15' : 'transparent',
+                                                opacity: already ? 0.5 : 1,
+                                                cursor: already ? 'default' : 'pointer',
+                                            }}
+                                        >
+                                            {roleThumb && (
+                                                <img
+                                                    src={`${ROLE_ICO}/${roleThumb}.png`}
+                                                    alt={pickerRoleName}
+                                                    className="shrink-0 w-9 h-9 rounded-lg object-cover"
+                                                    style={{ border: '2px solid var(--accent-color)' }}
+                                                    onError={(e) => { e.target.style.display = 'none'; }}
+                                                />
+                                            )}
+                                            <div className="flex-1 min-w-0">
+                                                <span className="text-sm font-bold" style={{ color: 'var(--text-main)' }}>{d.rangerName || `레인져 ${dIdx + 1}`}</span>
+                                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                                    {spec && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: 'var(--tag-bg)', color: 'var(--text-muted)' }}>{spec.label}</span>}
+                                                    {bg && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: 'var(--tag-bg)', color: 'var(--text-muted)' }}>{bg.label}</span>}
+                                                </div>
+                                            </div>
+                                            {already && <span className="text-[10px] font-bold" style={{ color: 'var(--accent-color)' }}>추가됨</span>}
+                                        </button>
+                                    );
+                                })}
+                                {decks.length === 0 && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>덱이 없습니다</span>}
+                            </div>
+                        </div>
+                    )}
                 </section>
 
                 {/* 우측 컬럼 — 탭 섹션 (Mission / Reward / Notable Events / Removed Card) */}
@@ -754,11 +1023,16 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                                 </div>
                                 <div className="flex flex-col gap-1.5">
                                     {campaign.rewards.map((rwd, idx) => (
-                                        <div key={idx} className="flex items-center gap-1.5 group">
-                                            <span className="text-sm py-1 flex-1" style={{ color: 'var(--text-main)', borderBottom: '1px solid var(--border-color)' }}>
-                                                {rwd}
-                                            </span>
-                                            <button onClick={() => removeReward(idx)} className="p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--danger)' }}>
+                                        <div key={idx} className="flex items-center gap-1.5">
+                                            <input
+                                                type="text"
+                                                value={rwd}
+                                                onChange={(e) => updateReward(idx, e.target.value)}
+                                                placeholder="보상을 입력하세요"
+                                                className="flex-1 text-sm px-2 py-1.5 rounded-lg border outline-none focus:ring-1"
+                                                style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)' }}
+                                            />
+                                            <button onClick={() => removeReward(idx)} className="p-0.5 rounded hover:bg-white/10 transition-colors" style={{ color: 'var(--danger)' }}>
                                                 <XIcon className="h-4 w-4" />
                                             </button>
                                         </div>
@@ -781,11 +1055,16 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                                 </div>
                                 <div className="flex flex-col gap-1.5">
                                     {campaign.notableEvents.map((evt, idx) => (
-                                        <div key={idx} className="flex items-center gap-1.5 group">
-                                            <span className="text-sm py-1 flex-1" style={{ color: 'var(--text-main)', borderBottom: '1px solid var(--border-color)' }}>
-                                                {evt}
-                                            </span>
-                                            <button onClick={() => removeNotableEvent(idx)} className="p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--danger)' }}>
+                                        <div key={idx} className="flex items-center gap-1.5">
+                                            <input
+                                                type="text"
+                                                value={evt}
+                                                onChange={(e) => updateNotableEvent(idx, e.target.value)}
+                                                placeholder="사건을 입력하세요"
+                                                className="flex-1 text-sm px-2 py-1.5 rounded-lg border outline-none focus:ring-1"
+                                                style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)' }}
+                                            />
+                                            <button onClick={() => removeNotableEvent(idx)} className="p-0.5 rounded hover:bg-white/10 transition-colors" style={{ color: 'var(--danger)' }}>
                                                 <XIcon className="h-4 w-4" />
                                             </button>
                                         </div>
@@ -808,11 +1087,16 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
                                 </div>
                                 <div className="flex flex-col gap-1.5">
                                     {(campaign.removedCards || []).map((card, idx) => (
-                                        <div key={idx} className="flex items-center gap-1.5 group">
-                                            <span className="text-sm py-1 flex-1" style={{ color: 'var(--text-main)', borderBottom: '1px solid var(--border-color)' }}>
-                                                {card}
-                                            </span>
-                                            <button onClick={() => removeRemovedCard(idx)} className="p-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--danger)' }}>
+                                        <div key={idx} className="flex items-center gap-1.5">
+                                            <input
+                                                type="text"
+                                                value={card}
+                                                onChange={(e) => updateRemovedCard(idx, e.target.value)}
+                                                placeholder="제거된 카드를 입력하세요"
+                                                className="flex-1 text-sm px-2 py-1.5 rounded-lg border outline-none focus:ring-1"
+                                                style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)' }}
+                                            />
+                                            <button onClick={() => removeRemovedCard(idx)} className="p-0.5 rounded hover:bg-white/10 transition-colors" style={{ color: 'var(--danger)' }}>
                                                 <XIcon className="h-4 w-4" />
                                             </button>
                                         </div>
@@ -829,15 +1113,32 @@ const CampaignTracker = ({ campaign, onUpdate }) => {
 
             {/* 메모 */}
             <section className="rounded-xl border p-4 shadow-md" style={cardStyle}>
-                <h3 className="text-base font-bold mb-3" style={{ color: 'var(--highlight)' }}>MEMO</h3>
-                <textarea
-                    value={campaign.memo || ''}
-                    onChange={(e) => updateField('memo', e.target.value)}
-                    placeholder="자유롭게 메모를 입력하세요..."
-                    rows={4}
-                    className="w-full text-base px-3 py-2.5 rounded-lg border outline-none resize-y focus:ring-1"
-                    style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)', minHeight: '90px' }}
-                />
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-base font-bold" style={{ color: 'var(--highlight)' }}>MEMO</h3>
+                    <button onClick={addMemo} className="p-1.5 rounded-md hover:bg-white/10 transition-colors" style={{ color: 'var(--clickable)' }}>
+                        <PlusIcon className="h-5 w-5" />
+                    </button>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                    {(campaign.memos || []).map((m, idx) => (
+                        <div key={idx} className="flex items-center gap-1.5">
+                            <input
+                                type="text"
+                                value={m}
+                                onChange={(e) => updateMemo(idx, e.target.value)}
+                                placeholder="메모를 입력하세요"
+                                className="flex-1 text-sm px-2 py-1.5 rounded-lg border outline-none focus:ring-1"
+                                style={{ ...inputStyle, '--tw-ring-color': 'var(--accent-color)' }}
+                            />
+                            <button onClick={() => removeMemo(idx)} className="p-0.5 rounded hover:bg-white/10 transition-colors" style={{ color: 'var(--danger)' }}>
+                                <XIcon className="h-4 w-4" />
+                            </button>
+                        </div>
+                    ))}
+                    {(campaign.memos || []).length === 0 && (
+                        <p className="text-sm text-center py-3" style={{ color: 'var(--text-muted)' }}>-</p>
+                    )}
+                </div>
             </section>
         </div>
     );
