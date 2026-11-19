@@ -1,46 +1,56 @@
-import {Component} from "react";
+import { Component } from "react";
 import withNavigate from "../../utils/withNavigate";
-import {Link} from "react-router-dom";
+import { Link } from "react-router-dom";
+import { NavigationItems } from "../resources/DataSet/NavigationItems";
+import { homeScreenItems } from "../../homeScreen/resource/resources";
+
+const bgg4AssistantIcoPath = "/티굴.png";
 
 class FooterLayout extends Component {
+  state = {};
 
-    state = {
+  constructor(props) {
+    super(props);
+  }
 
-    }
+  handler = {};
 
-    constructor(props) {
-        super(props);
-    }
+  fnc = {};
 
-    handler = {
+  render() {
+    const libraryLinks = homeScreenItems.filter((item) => item.path);
+    const year = new Date().getFullYear();
 
-    }
+    return (
+      <footer className="border-t border-white/10 bg-[#0a0118] text-slate-300">
+        <div className="w-full h-px bg-gradient-to-r from-transparent via-purple-400/40 to-transparent" />
+        <div className="container px-4 py-10 mx-auto sm:px-6 sm:py-12">
+          <div className="grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="lg:col-span-2">
+              <Link to="/" className="flex items-center gap-2.5">
+                <img
+                  src={bgg4AssistantIcoPath}
+                  alt="logo"
+                  className="h-9 w-9 rounded-xl ring-1 ring-white/10"
+                />
+                <span className="text-lg font-bold text-transparent bg-gradient-to-r from-purple-300 to-violet-300 bg-clip-text">
+                  Bgg4Assistant
+                </span>
+              </Link>
+              <p className="mt-3 text-sm leading-relaxed text-slate-400">
+                당신의 보드게임 경험을 더욱 즐겁게 만들어드립니다.
+              </p>
+            </div>
+          </div>
 
-    fnc = {
-
-    }
-
-    render() {
-        return (
-            <>
-                <footer className="bg-gray-800 text-white py-6 sm:py-8 flex-shrink-0">
-                    <div className="container mx-auto px-4">
-                        <div className="flex flex-col sm:flex-row justify-between">
-                            <div className="w-full sm:w-1/3 mb-6 sm:mb-0">
-                                <h3 className="text-lg font-bold mb-2">보드게임 어시스턴트</h3>
-                                <p className="text-sm">당신의 보드게임 경험을 더욱 즐겁게 만들어드립니다.</p>
-                            </div>
-                        </div>
-                        <div className="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-gray-700 text-sm text-center">
-                            <p>&copy; {new Date().getFullYear()} SnowFlower. All rights reserved.</p>
-                        </div>
-                    </div>
-                </footer>
-            </>
-        )
-    }
-
-
+          <div className="flex flex-col gap-2 pt-6 mt-10 text-xs border-t border-white/10 text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+            <p>&copy; {year} SnowFlower. All rights reserved.</p>
+            <p>Made with React &amp; Tailwind CSS</p>
+          </div>
+        </div>
+      </footer>
+    );
+  }
 }
 
 export default withNavigate(FooterLayout);

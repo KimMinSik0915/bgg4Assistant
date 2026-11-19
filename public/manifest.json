@@ -18,13 +18,13 @@
       "sizes": "512x512"
     },
     {
-      "src": "bgg4Assistant_ico.webp",
-      "type": "image/webp",
+      "src": "티굴.png",
+      "type": "image/png",
       "sizes": "192x192"
     }
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "theme_color": "#0a0118",
+  "background_color": "#0a0118"
 }

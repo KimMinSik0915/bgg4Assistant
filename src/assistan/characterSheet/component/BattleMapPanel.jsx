@@ -1,0 +1,1291 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { calculateGridPos } from '../util/gridCoords';
+
+/**
+ * @Author : 김민식
+ * BattleMapPanel : 스케일/줌 + 지도 위치 맞춤(Offset) + 격자 크기/색상 + 최신 좌표 동기화(tokensRef)
+ * + 토큰 HP 직접 입력(Direct Set) 기능 포함 + 장소 핀(랜드마크) 찍기 기능 포함
+ */
+
+// 🎨 격자 고대비 색상 프리셋
+const GRID_COLORS = {
+    amber: { name: '🟡 황금', line: 'rgba(251, 191, 36, 0.85)', shadow: 'rgba(0, 0, 0, 0.7)' },
+    white: { name: '⚪ 흰색', line: 'rgba(255, 255, 255, 0.9)', shadow: 'rgba(0, 0, 0, 0.7)' },
+    red:   { name: '🔴 빨강', line: 'rgba(239, 68, 68, 0.9)',   shadow: 'rgba(0, 0, 0, 0.7)' },
+    black: { name: '⚫ 검정', line: 'rgba(0, 0, 0, 0.85)',     shadow: 'rgba(255, 255, 255, 0.5)' }
+};
+
+// 💡 이미지 압축 헬퍼 함수 (압축 후 실제 픽셀 크기도 함께 반환 - AI 지도 비전 조회 시 %좌표를
+// 픽셀로 환산하는 데 필요하다)
+// 다른 곳(예: 커스텀 uploadImage를 넘기는 협동 세션 확장)에서도 같은 압축 로직을 쓸 수 있게 export한다.
+export const compressImage = (file, maxWidth = 1200, quality = 0.7) => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+
+                if (width > maxWidth) {
+                    height = Math.round((height * maxWidth) / width);
+                    width = maxWidth;
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve({ url : canvas.toDataURL('image/jpeg', quality), width, height });
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+};
+
+const BattleMapPanel = ({
+    mapState, onUpdateMapState, isMobile
+    // 🤝 협동 세션 전용 props (솔로 모드에서는 전달되지 않으므로 전부 기본값으로 기존 동작 유지)
+    // - liveSync: true면 mapState.mapUpdatedAt이 바뀔 때마다(=다른 참가자/방장이 지도를 바꿨을 때)
+    //   내 화면도 그 내용으로 다시 맞춘다(단, 확대/이동은 각자 화면 개인 설정이라 제외).
+    // - canUploadMap: false면 "➕ 지도" 업로드 버튼을 숨긴다(방장만 지도를 올릴 수 있게 하는 용도).
+    // - uploadImage: 있으면 로컬 base64 압축 대신 이 함수로 이미지를 올리고 돌아온 URL을 쓴다.
+    //   현재 협동 세션(MultiplayerRoomPanel)은 이 prop을 넘기지 않아서 기본값(로컬 base64 압축)을
+    //   그대로 쓴다 - Firebase Storage(요금제 전환이 필요할 수 있음) 없이 Realtime Database만으로
+    //   동작하게 하기 위한 선택이며, 필요해지면 이 자리에 다시 연결하면 된다.
+  , liveSync = false, canUploadMap = true, uploadImage
+}) => {
+    const [maps, setMaps] = useState([]);
+    const [activeMapId, setActiveMapId] = useState(null);
+    const [tokens, setTokens] = useState([]);
+    const [selectedTokenId, setSelectedTokenId] = useState(null);
+    // 📱 모바일: 위치맞춤/지도이동/격자/배율/업로드 등 설정 줄이 지도 세로 공간을 많이 잡아먹으므로 기본은 접어둔다
+    const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
+    const [draggingTokenId, setDraggingTokenId] = useState(null);
+
+    // 📐 격자 설정 상태
+    const [showGrid, setShowGrid] = useState(true);
+    const [gridSize, setGridSize] = useState(56);
+    const [gridColorKey, setGridColorKey] = useState('amber');
+
+    // 🔍 전체 지도 확대/축소 및 화면 드래그 이동 상태
+    const [mapScale, setMapScale] = useState(100);
+    const [isMapLocked, setIsMapLocked] = useState(false);
+    const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+    const [isPanning, setIsPanning] = useState(false);
+
+    // 🎯 지도 오프셋 미세 조정 상태
+    const [isAlignMode, setIsAlignMode] = useState(false);
+    const [mapOffset, setMapOffset] = useState({ x: 0, y: 0 });
+
+    // 📍 장소 핀(랜드마크) 찍기 모드 - 지도를 클릭하면 이미지가 아닌 "이름표"만 있는 표식을 놓는다.
+    // 이렇게 찍은 핀은 일반 토큰과 같은 배열(tokens)에 isPin:true로 저장되어, AI GM에게 매 턴
+    // 전달되는 좌표 목록에 함께 실린다 - AI가 지도 이미지를 못 봐도 "동굴 입구" 같은 이름을
+    // 정확한 격자 좌표로 알 수 있게 되는, 추가 비용 없는(순수 텍스트) 방법이다.
+    const [isPinMode, setIsPinMode] = useState(false);
+
+    const dragRef = useRef({ startX: 0, startY: 0, tokenX: 0, tokenY: 0, isDragging: false });
+    const panStartRef = useRef({ x: 0, y: 0 });
+    const alignStartRef = useRef({ x: 0, y: 0 });
+    const boardRef = useRef(null);
+
+    // 👹 AI가 token_spawns로 생성한 토큰은 이미지가 없다(url 없음) - 그 토큰을 클릭하면 이 숨겨진
+    // input을 대신 열어 사용자가 바로 이미지를 골라 넣을 수 있게 한다. 어느 토큰에 넣을지는
+    // ref로 잠깐 기억해뒀다가 파일 선택이 끝나면 사용한다.
+    const pendingImageTokenIdRef = useRef(null);
+    const pendingImageInputRef = useRef(null);
+
+    // ⚡ 클로저 문제 방지용 tokensRef (항상 최신 tokens 상태 유지)
+    const tokensRef = useRef(tokens);
+    useEffect(() => {
+        tokensRef.current = tokens;
+    }, [tokens]);
+
+    // 🔍 휠/핀치 줌은 addEventListener(native, {passive:false})로 붙여야 preventDefault가 먹기 때문에
+    // 마운트 시 한 번만 등록되는 리스너 안에서도 항상 최신 값을 읽을 수 있도록 ref로 미러링해둔다
+    const mapScaleRef = useRef(mapScale);
+    useEffect(() => { mapScaleRef.current = mapScale; }, [mapScale]);
+    const panOffsetRef = useRef(panOffset);
+    useEffect(() => { panOffsetRef.current = panOffset; }, [panOffset]);
+    const zoomPersistTimerRef = useRef(null);
+    const pinchRef = useRef({ active: false, lastDist: 0 });
+
+    // 🔁 liveSync 모드에서 "방금 내가 직접 올린 갱신"과 "다른 참가자가 올린 갱신"을 구분하기 위한 표식.
+    // notifyParentState가 찍은 타임스탬프를 기억해뒀다가, 나중에 같은 값이 mapState로 되돌아오면
+    // (=내가 쓴 게 그대로 반영된 것뿐) 다시 처리하지 않는다.
+    const lastPushedUpdateAtRef = useRef(null);
+
+    // 💾 상위(sessionState 또는 Firebase 방 데이터) 전달 헬퍼
+    const notifyParentState = (updated = {}) => {
+        if (typeof onUpdateMapState !== 'function') return;
+
+        const payload = {
+            maps: updated.maps ?? maps,
+            activeMapId: updated.activeMapId ?? activeMapId,
+            tokens: updated.tokens ?? tokensRef.current,
+            showGrid: updated.showGrid ?? showGrid,
+            gridSize: updated.gridSize ?? gridSize,
+            gridColorKey: updated.gridColorKey ?? gridColorKey,
+            isMapLocked: updated.isMapLocked ?? isMapLocked,
+            mapOffset: updated.mapOffset ?? mapOffset
+        };
+
+        if (liveSync) {
+            // 🤝 확대/화면 이동은 각자 보는 화면의 개인 설정이므로 공유 상태에는 싣지 않는다
+            // (그렇지 않으면 한 명이 확대할 때마다 다른 참가자들의 화면까지 같이 움직여버린다).
+            const stamp = Date.now();
+            lastPushedUpdateAtRef.current = stamp;
+            payload.mapUpdatedAt = stamp;
+        } else {
+            // 🎲 솔로 모드는 다음에 다시 열었을 때 보던 화면 그대로 복원해야 하므로 함께 저장한다
+            payload.mapScale = updated.mapScale ?? mapScale;
+            payload.panOffset = updated.panOffset ?? panOffset;
+        }
+
+        onUpdateMapState(payload);
+    };
+
+    // 네이티브 휠 리스너(마운트 시 1회 등록)에서도 항상 최신 notifyParentState를 호출할 수 있도록 ref로 보관
+    const notifyParentStateRef = useRef(notifyParentState);
+    useEffect(() => { notifyParentStateRef.current = notifyParentState; });
+
+    // 초기 상태 복원
+    useEffect(() => {
+        if (mapState) {
+            if (mapState.maps) setMaps(mapState.maps);
+            if (mapState.activeMapId !== undefined) setActiveMapId(mapState.activeMapId);
+            if (mapState.tokens) {
+                setTokens(mapState.tokens);
+                tokensRef.current = mapState.tokens;
+            }
+            if (mapState.showGrid !== undefined) setShowGrid(mapState.showGrid);
+            if (mapState.gridSize !== undefined) setGridSize(mapState.gridSize);
+            if (mapState.gridColorKey) setGridColorKey(mapState.gridColorKey);
+            if (mapState.mapScale !== undefined) setMapScale(mapState.mapScale);
+            if (mapState.isMapLocked !== undefined) setIsMapLocked(mapState.isMapLocked);
+            if (mapState.panOffset) setPanOffset(mapState.panOffset);
+            if (mapState.mapOffset) setMapOffset(mapState.mapOffset);
+        }
+    }, []);
+
+    // 🤖 AI(GM 채팅)가 대화 결과에 따라 토큰을 이동시킨 경우, 상위(CharacterSheetManager)가
+    // mapState.aiTokenUpdateAt을 갱신해 새 좌표를 내려보낸다. 사용자가 직접 드래그할 때 발생하는
+    // 일반적인 notifyParentState 왕복에는 이 필드가 없으므로, 오직 AI가 옮겼을 때만 로컬 상태를
+    // 다시 동기화한다(그 외에는 이 컴포넌트가 tokens의 소유권을 그대로 갖는다).
+    const lastAiTokenUpdateRef = useRef(null);
+    useEffect(() => {
+        if (!mapState?.aiTokenUpdateAt || mapState.aiTokenUpdateAt === lastAiTokenUpdateRef.current) return;
+        lastAiTokenUpdateRef.current = mapState.aiTokenUpdateAt;
+        if (mapState.tokens) {
+            setTokens(mapState.tokens);
+            tokensRef.current = mapState.tokens;
+        }
+    }, [mapState?.aiTokenUpdateAt, mapState?.tokens]);
+
+    // 🤝 [협동 세션 전용] 다른 참가자(방장의 지도 업로드 포함)가 mapState를 바꾸면 mapUpdatedAt이
+    // 갱신되어 여기로 전달된다. 그중 "내가 방금 직접 쓴 값"은 lastPushedUpdateAtRef와 같으므로
+    // 건너뛰고, 정말 남이 바꾼 값일 때만 지도/토큰/격자 설정을 내 화면에도 반영한다.
+    // (mapScale/panOffset은 각자 화면의 개인 설정이라 여기서 건드리지 않는다.)
+    useEffect(() => {
+        if (!liveSync) return;
+        const remoteAt = mapState?.mapUpdatedAt;
+        if (!remoteAt || remoteAt === lastPushedUpdateAtRef.current) return;
+        lastPushedUpdateAtRef.current = remoteAt;
+
+        if (mapState.maps) setMaps(mapState.maps);
+        if (mapState.activeMapId !== undefined) setActiveMapId(mapState.activeMapId);
+        if (mapState.tokens) {
+            setTokens(mapState.tokens);
+            tokensRef.current = mapState.tokens;
+        }
+        if (mapState.showGrid !== undefined) setShowGrid(mapState.showGrid);
+        if (mapState.gridSize !== undefined) setGridSize(mapState.gridSize);
+        if (mapState.gridColorKey) setGridColorKey(mapState.gridColorKey);
+        if (mapState.isMapLocked !== undefined) setIsMapLocked(mapState.isMapLocked);
+        if (mapState.mapOffset) setMapOffset(mapState.mapOffset);
+        // mapState 전체를 deps에 넣으면 부모가 매 렌더 새 객체를 내려줄 때마다 재실행되므로,
+        // "갱신됐는지"를 판단하는 mapUpdatedAt만 감시한다(위 로직도 그 값에만 반응하도록 짜여 있음).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [liveSync, mapState?.mapUpdatedAt]);
+
+    const getPos = (e) => {
+        if (e.touches && e.touches.length > 0) {
+            return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }
+        return { x: e.clientX, y: e.clientY };
+    };
+
+    // 🤏 핀치 줌용 - 두 터치 포인트 사이 거리 / 중간점
+    const getTouchDistance = (touches) => {
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        return Math.hypot(dx, dy);
+    };
+    const getTouchMidpoint = (touches) => ({
+        x: (touches[0].clientX + touches[1].clientX) / 2,
+        y: (touches[0].clientY + touches[1].clientY) / 2
+    });
+
+    // 💾 확대/축소는 드래그처럼 매 이벤트마다 상위로 저장하면 과도하므로, 조작이 멈추고 잠시 후에만 저장한다
+    const schedulePersistZoom = () => {
+        if (zoomPersistTimerRef.current) clearTimeout(zoomPersistTimerRef.current);
+        zoomPersistTimerRef.current = setTimeout(() => {
+            notifyParentStateRef.current({ mapScale: mapScaleRef.current, panOffset: panOffsetRef.current });
+        }, 400);
+    };
+
+    // 🔍 특정 지점(마우스 커서 / 핀치 중간점)이 화면에서 그대로 고정된 채로 목표 배율까지 확대/축소.
+    // pan/zoom 뷰포트의 transformOrigin을 '0 0'으로 맞춰뒀기 때문에, 뷰포트 기준 좌표(px,py)에 대해
+    // "그 지점 아래의 콘텐츠 좌표는 확대/축소 후에도 같은 화면 위치에 있어야 한다"는 식으로 panOffset을 함께 보정한다.
+    // 마운트 시 1회만 등록되는 네이티브 wheel 리스너에서도 안전하게 쓸 수 있도록 상태가 아닌 ref만 읽는다.
+    const setZoomAtPoint = (targetScalePct, clientX, clientY) => {
+        if (!boardRef.current) return;
+        const rect = boardRef.current.getBoundingClientRect();
+        const px = clientX - rect.left;
+        const py = clientY - rect.top;
+
+        const oldScalePct = mapScaleRef.current;
+        const newScalePct = Math.max(10, Math.min(200, Math.round(targetScalePct)));
+        if (newScalePct === oldScalePct) return;
+
+        const oldScale = oldScalePct / 100;
+        const newScale = newScalePct / 100;
+        const currentPan = panOffsetRef.current;
+
+        const contentX = (px - currentPan.x) / oldScale;
+        const contentY = (py - currentPan.y) / oldScale;
+        const newPanOffset = {
+            x: px - contentX * newScale,
+            y: py - contentY * newScale
+        };
+
+        mapScaleRef.current = newScalePct;
+        panOffsetRef.current = newPanOffset;
+        setMapScale(newScalePct);
+        setPanOffset(newPanOffset);
+        schedulePersistZoom();
+    };
+
+    const zoomAtPoint = (deltaScale, clientX, clientY) => {
+        setZoomAtPoint(mapScaleRef.current + deltaScale, clientX, clientY);
+    };
+
+    // 🖱️ 마우스 휠(웹) / 트랙패드로 커서 위치를 기준으로 확대·축소.
+    // React의 onWheel은 브라우저가 passive 리스너로 취급해 preventDefault가 무시될 수 있어 네이티브로 직접 등록한다.
+    useEffect(() => {
+        const el = boardRef.current;
+        if (!el) return undefined;
+
+        const handleWheelNative = (e) => {
+            e.preventDefault();
+            const rawDelta = -e.deltaY * 0.08;
+            const delta = Math.max(-15, Math.min(15, rawDelta));
+            zoomAtPoint(delta, e.clientX, e.clientY);
+        };
+
+        el.addEventListener('wheel', handleWheelNative, { passive: false });
+        return () => el.removeEventListener('wheel', handleWheelNative);
+        // zoomAtPoint는 ref만 읽고 안정적인 setState/타이머만 사용해 재생성돼도 동작이 바뀌지 않으므로
+        // 리스너를 매 렌더 재등록할 필요가 없다 (마운트 시 1회 등록으로 충분).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // 📐 격자 크기 조절 - 슬라이더 드래그/마우스 휠 둘 다 이 함수 하나로 처리한다.
+    // (버튼을 여러 번 클릭하는 대신 슬라이더를 드래그하거나, 그 위에서 휠을 굴려 바꿀 수 있게 한 것)
+    // 네이티브 wheel 리스너(마운트 시 1회 등록)에서도 항상 최신 값을 다루도록 gridSize는 ref로만 읽고 쓴다.
+    const gridSizeRef = useRef(gridSize);
+    useEffect(() => { gridSizeRef.current = gridSize; }, [gridSize]);
+    const gridSizePersistTimerRef = useRef(null);
+
+    const setGridSizeClamped = (newSizeRaw) => {
+        const newSize = Math.max(20, Math.min(200, Math.round(newSizeRaw)));
+        if (newSize === gridSizeRef.current) return;
+        gridSizeRef.current = newSize;
+        setGridSize(newSize);
+
+        const updatedTokens = tokensRef.current.map(t => ({
+            ...t,
+            gridPos: calculateGridPos(t.x, t.y, newSize)
+        }));
+        tokensRef.current = updatedTokens;
+        setTokens(updatedTokens);
+
+        // 💾 슬라이더 드래그/휠은 짧은 시간에 여러 번 바뀌므로, 매번 상위로 저장하는 대신
+        // 조작이 멈추고 잠시 후에만 저장한다 (줌 배율 저장과 같은 방식)
+        if (gridSizePersistTimerRef.current) clearTimeout(gridSizePersistTimerRef.current);
+        gridSizePersistTimerRef.current = setTimeout(() => {
+            notifyParentStateRef.current({ gridSize: gridSizeRef.current, tokens: tokensRef.current });
+        }, 300);
+    };
+
+    // 🖱️ 격자 크기 슬라이더 위에서 마우스 휠 - 네이티브로 등록해야 preventDefault가 먹혀 휠을 굴려도 페이지가 스크롤되지 않는다.
+    // showGrid를 끄면 슬라이더 DOM 자체가 사라졌다 다시 생기므로, 꺼졌다 켜질 때마다 리스너를 다시 붙인다.
+    const gridSizeControlRef = useRef(null);
+    useEffect(() => {
+        const el = gridSizeControlRef.current;
+        if (!el) return undefined;
+
+        const handleGridWheelNative = (e) => {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? 4 : -4;
+            setGridSizeClamped(gridSizeRef.current + delta);
+        };
+
+        el.addEventListener('wheel', handleGridWheelNative, { passive: false });
+        return () => el.removeEventListener('wheel', handleGridWheelNative);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showGrid]);
+
+    // 🎯 지도 오프셋 미세 조절
+    const nudgeMapOffset = (dx, dy) => {
+        const nextOffset = {
+            x: mapOffset.x + dx,
+            y: mapOffset.y + dy
+        };
+        setMapOffset(nextOffset);
+        notifyParentState({ mapOffset: nextOffset });
+    };
+
+    // 🖼️ 이미지 하나를 "쓸 수 있는 형태"로 만드는 공통 헬퍼.
+    // uploadImage prop이 있으면(협동 세션) 그 함수로 실제 업로드까지 맡기고, 없으면(솔로 모드)
+    // 기존처럼 로컬 base64로만 압축한다 - 호출부(handleMapUpload 등)는 어느 쪽인지 몰라도 된다.
+    const acquireImage = (file, kind, maxWidth, quality) =>
+        uploadImage ? uploadImage(file, { kind, maxWidth, quality }) : compressImage(file, maxWidth, quality);
+
+    // 🗺️ 지도 업로드 (협동 세션에서는 canUploadMap=false인 참가자에게 버튼 자체가 안 보이지만,
+    // 혹시 모를 상황을 대비해 함수 레벨에서도 한 번 더 막는다)
+    const handleMapUpload = async (e) => {
+        if (!canUploadMap) { e.target.value = ''; return; }
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+
+        // 이미지 압축/업로드는 파일이 깨져있거나(잘못된 형식) 협동 세션의 네트워크 문제 등으로
+        // 실패할 수 있다 - 하나가 실패해도 Promise.all 전체가 죽어서 나머지 파일까지 조용히 사라지지
+        // 않도록 파일별로 감싸고, 실패하면 사용자에게 원인을 알 수 있는 메시지를 보여준다.
+        const readPromises = files.map(async (file) => {
+            try {
+                const { url, width, height } = await acquireImage(file, 'map', 1200, 0.7);
+                return {
+                    id: Date.now() + Math.random(),
+                    name: file.name.replace(/\.[^/.]+$/, ""),
+                    url,
+                    width,  // AI 지도 비전 조회 시 %좌표를 픽셀로 환산하는 데 사용
+                    height
+                };
+            } catch (err) {
+                console.error('지도 이미지 업로드 실패:', err);
+                return null;
+            }
+        });
+
+        const uploaded = await Promise.all(readPromises);
+        const newMaps = uploaded.filter(Boolean);
+        const failedCount = uploaded.length - newMaps.length;
+
+        if (newMaps.length > 0) {
+            const nextMaps = [...maps, ...newMaps];
+            const nextActiveId = !activeMapId ? newMaps[0].id : activeMapId;
+            setMaps(nextMaps);
+            if (!activeMapId) setActiveMapId(nextActiveId);
+            notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
+        }
+        if (failedCount > 0) {
+            window.alert(`지도 업로드에 실패했어요 (${failedCount}개). 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.`);
+        }
+        e.target.value = '';
+    };
+
+    // 🗑️ 지도 삭제 - 여러 장 올려둔 지도 중 하나를 목록에서 제거한다.
+    // 지금 보고 있던(활성) 지도를 지웠다면 남은 지도 중 첫 번째로 자동 전환하고, 하나도 안 남으면 "등록된 지도 없음" 상태로 되돌린다.
+    const removeMap = (id) => {
+        const nextMaps = maps.filter(m => m.id !== id);
+        const nextActiveId = activeMapId === id
+            ? (nextMaps.length > 0 ? nextMaps[0].id : null)
+            : activeMapId;
+        setMaps(nextMaps);
+        setActiveMapId(nextActiveId);
+        notifyParentState({ maps: nextMaps, activeMapId: nextActiveId });
+    };
+
+    // 🔀 활성 지도 전환
+    const switchActiveMap = (id) => {
+        if (id === activeMapId) return;
+        setActiveMapId(id);
+        notifyParentState({ activeMapId: id });
+    };
+
+    // ✏️ 지도 이름 수정
+    const renameMap = (id, currentName) => {
+        const name = window.prompt('지도 이름을 입력하세요.', currentName || '');
+        if (!name || !name.trim() || name.trim() === currentName) return;
+        const nextMaps = maps.map(m => m.id === id ? { ...m, name: name.trim() } : m);
+        setMaps(nextMaps);
+        notifyParentState({ maps: nextMaps });
+    };
+
+    // ✏️ 토큰/핀 이름 수정 - AI GM은 이 이름으로 위치를 참조하므로, 바꾸면 이후 대화부터 새 이름으로 인식된다
+    const renameToken = (id, currentName) => {
+        const name = window.prompt('이름을 입력하세요.', currentName || '');
+        if (!name || !name.trim() || name.trim() === currentName) return;
+        const nextTokens = tokens.map(t => t.id === id ? { ...t, name: name.trim() } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
+    };
+
+    // 🎭 토큰 업로드
+    const handleTokenUpload = async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+
+        const boardWidth = boardRef.current ? boardRef.current.offsetWidth : 600;
+        const boardHeight = boardRef.current ? boardRef.current.offsetHeight : 400;
+        const scaleFactor = mapScale / 100;
+
+        const centerX = Math.max(0, (boardWidth / 2 - panOffset.x) / scaleFactor - gridSize / 2);
+        const centerY = Math.max(0, (boardHeight / 2 - panOffset.y) / scaleFactor - gridSize / 2);
+
+        const readPromises = files.map(async (file, idx) => {
+            try {
+                const { url : compressedUrl } = await acquireImage(file, 'token', 400, 0.8);
+                const posX = centerX + (idx * 12);
+                const posY = centerY + (idx * 12);
+
+                return {
+                    id: Date.now() + Math.random(),
+                    name: file.name.replace(/\.[^/.]+$/, ""),
+                    url: compressedUrl,
+                    x: posX,
+                    y: posY,
+                    gridPos: calculateGridPos(posX, posY, gridSize),
+                    size: gridSize,
+                    hp: 30,
+                    maxHp: 30
+                };
+            } catch (err) {
+                console.error('토큰 이미지 업로드 실패:', err);
+                return null;
+            }
+        });
+
+        const uploaded = await Promise.all(readPromises);
+        const newTokens = uploaded.filter(Boolean);
+        const failedCount = uploaded.length - newTokens.length;
+
+        if (newTokens.length > 0) {
+            const nextTokens = [...tokens, ...newTokens];
+            setTokens(nextTokens);
+            tokensRef.current = nextTokens;
+            setSelectedTokenId(newTokens[newTokens.length - 1].id);
+            notifyParentState({ tokens: nextTokens });
+        }
+        if (failedCount > 0) {
+            window.alert(`토큰 업로드에 실패했어요 (${failedCount}개). 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.`);
+        }
+        e.target.value = '';
+    };
+
+    // 🔍 전체 확대/축소 버튼 - 뷰포트 중앙을 기준점 삼아 휠/핀치 줌과 동일한 방식으로 확대/축소
+    const handleZoom = (delta) => {
+        if (!boardRef.current) return;
+        const rect = boardRef.current.getBoundingClientRect();
+        zoomAtPoint(delta, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    };
+
+    const resetMapView = () => {
+        if (zoomPersistTimerRef.current) { clearTimeout(zoomPersistTimerRef.current); zoomPersistTimerRef.current = null; }
+        mapScaleRef.current = 100;
+        panOffsetRef.current = { x: 0, y: 0 };
+        setMapScale(100);
+        setPanOffset({ x: 0, y: 0 });
+        setMapOffset({ x: 0, y: 0 });
+        notifyParentState({ mapScale: 100, panOffset: { x: 0, y: 0 }, mapOffset: { x: 0, y: 0 } });
+    };
+
+    // 📍 클릭한 화면 좌표를 콘텐츠 좌표(토큰/격자와 같은 좌표계)로 변환해 이름표만 있는 핀을 놓는다.
+    // 이미지 업로드 없이 즉시 생성되며, 이후 일반 토큰과 동일하게 드래그로 위치를 조정할 수 있다.
+    const placePinAt = (clientX, clientY) => {
+        if (!boardRef.current) return;
+        const rect = boardRef.current.getBoundingClientRect();
+        const scaleFactor = mapScale / 100;
+        const contentX = (clientX - rect.left - panOffset.x) / scaleFactor;
+        const contentY = (clientY - rect.top - panOffset.y) / scaleFactor;
+
+        const name = window.prompt('핀(장소 표식) 이름을 입력하세요. 예: 동굴 입구', '');
+        if (!name || !name.trim()) return;
+
+        const pinSize = Math.max(16, Math.round(gridSize * 0.6));
+        const posX = contentX - pinSize / 2;
+        const posY = contentY - pinSize / 2;
+
+        const newPin = {
+            id : Date.now() + Math.random()
+          , name : name.trim()
+          , isPin : true
+          , x : posX
+          , y : posY
+          , gridPos : calculateGridPos(posX, posY, gridSize)
+          , size : pinSize
+        };
+
+        const nextTokens = [...tokens, newPin];
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        setSelectedTokenId(newPin.id);
+        notifyParentState({ tokens : nextTokens });
+    };
+
+    // 🖐️ 지도 바탕 드래그 시작
+    const handleBoardStart = (e) => {
+        // 🤏 손가락이 2개 이상 닿으면 핀치 줌 시작 - 진행 중이던 패닝/토큰 드래그는 취소
+        if (e.touches && e.touches.length >= 2) {
+            setSelectedTokenId(null);
+            setDraggingTokenId(null);
+            setIsPanning(false);
+            pinchRef.current = { active: true, lastDist: getTouchDistance(e.touches) };
+            return;
+        }
+
+        setSelectedTokenId(null);
+        const pos = getPos(e);
+
+        if (isPinMode) {
+            placePinAt(pos.x, pos.y);
+            return; // 핀 모드에서는 지도를 패닝하지 않는다 - 클릭 = 핀 배치
+        }
+
+        if (isAlignMode) {
+            setIsPanning(true);
+            alignStartRef.current = {
+                x: pos.x - (mapOffset.x * (mapScale / 100)),
+                y: pos.y - (mapOffset.y * (mapScale / 100))
+            };
+        } else if (!isMapLocked) {
+            setIsPanning(true);
+            panStartRef.current = {
+                x: pos.x - panOffset.x,
+                y: pos.y - panOffset.y
+            };
+        }
+    };
+
+    // 🖱️ 토큰 드래그 시작
+    const handleTokenStart = (e, token) => {
+        e.stopPropagation();
+        const pos = getPos(e);
+        setDraggingTokenId(token.id);
+
+        dragRef.current = {
+            startX: pos.x,
+            startY: pos.y,
+            tokenX: token.x,
+            tokenY: token.y,
+            isDragging: false
+        };
+    };
+
+    // 🖱️ 이동 처리
+    const handleMove = (e) => {
+        // 🤏 핀치 줌 진행 중 - 두 손가락 사이 거리 변화를 확대율로, 중간점을 기준점으로 삼는다
+        if (e.touches && e.touches.length >= 2 && pinchRef.current.active) {
+            const dist = getTouchDistance(e.touches);
+            const mid = getTouchMidpoint(e.touches);
+            if (pinchRef.current.lastDist > 0 && dist > 0) {
+                const ratio = dist / pinchRef.current.lastDist;
+                setZoomAtPoint(mapScale * ratio, mid.x, mid.y);
+            }
+            pinchRef.current.lastDist = dist;
+            return;
+        }
+
+        const pos = getPos(e);
+
+        if (draggingTokenId) {
+            const scaleFactor = mapScale / 100;
+            const deltaX = (pos.x - dragRef.current.startX) / scaleFactor;
+            const deltaY = (pos.y - dragRef.current.startY) / scaleFactor;
+
+            if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+                dragRef.current.isDragging = true;
+            }
+
+            setTokens(prev => {
+                const nextTokens = prev.map(t => {
+                    if (t.id === draggingTokenId) {
+                        const newX = dragRef.current.tokenX + deltaX;
+                        const newY = dragRef.current.tokenY + deltaY;
+                        return {
+                            ...t,
+                            x: newX,
+                            y: newY,
+                            gridPos: calculateGridPos(newX, newY, gridSize)
+                        };
+                    }
+                    return t;
+                });
+                tokensRef.current = nextTokens;
+                return nextTokens;
+            });
+        } else if (isPanning) {
+            if (isAlignMode) {
+                const scaleFactor = mapScale / 100;
+                setMapOffset({
+                    x: (pos.x - alignStartRef.current.x) / scaleFactor,
+                    y: (pos.y - alignStartRef.current.y) / scaleFactor
+                });
+            } else if (!isMapLocked) {
+                setPanOffset({
+                    x: pos.x - panStartRef.current.x,
+                    y: pos.y - panStartRef.current.y
+                });
+            }
+        }
+    };
+
+    const handleEnd = (e) => {
+        // 🤏 핀치 줌 종료 처리 - 손가락이 하나 남으면 그 손가락으로 자연스럽게 패닝을 이어간다
+        if (pinchRef.current.active) {
+            const remainingTouches = e && e.touches ? e.touches : [];
+            if (remainingTouches.length >= 2) return; // 아직 두 손가락 이상 - 계속 핀치 중
+
+            pinchRef.current = { active: false, lastDist: 0 };
+            notifyParentState({ mapScale: mapScaleRef.current, panOffset: panOffsetRef.current });
+
+            if (remainingTouches.length === 1 && !isMapLocked) {
+                const t = remainingTouches[0];
+                setIsPanning(true);
+                panStartRef.current = {
+                    x: t.clientX - panOffsetRef.current.x,
+                    y: t.clientY - panOffsetRef.current.y
+                };
+            }
+            return;
+        }
+
+        if (draggingTokenId || isPanning) {
+            notifyParentState({
+                tokens: tokensRef.current,
+                panOffset,
+                mapOffset
+            });
+        }
+        setDraggingTokenId(null);
+        setIsPanning(false);
+    };
+
+    const changeTokenSize = (id, delta) => {
+        const nextTokens = tokens.map(t => t.id === id ? { ...t, size: Math.max(20, Math.min(350, (t.size ?? gridSize) + delta)) } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
+    };
+
+    const setTokenPresetSize = (id, multiplier) => {
+        const targetSize = gridSize * multiplier;
+        const nextTokens = tokens.map(t => t.id === id ? { ...t, size: targetSize } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
+    };
+
+    // ❤️ HP 증감 버튼 조작
+    const changeTokenHp = (id, amount) => {
+        const nextTokens = tokens.map(t => {
+            if (t.id === id) {
+                const maxHp = t.maxHp ?? 30;
+                return { ...t, hp: Math.max(0, Math.min(maxHp, (t.hp ?? maxHp) + amount)) };
+            }
+            return t;
+        });
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
+    };
+
+    // ✏️ HP / MaxHP 직접 입력 조작
+    const handleHpDirectChange = (id, field, rawValue) => {
+        const parsedVal = parseInt(rawValue, 10);
+        const val = isNaN(parsedVal) ? 0 : Math.max(0, parsedVal);
+
+        const nextTokens = tokens.map(t => {
+            if (t.id === id) {
+                const newMax = field === 'maxHp' ? val : (t.maxHp ?? 30);
+                const newHp = field === 'hp' ? val : (t.hp ?? newMax);
+                return {
+                    ...t,
+                    hp: Math.min(newHp, newMax),
+                    maxHp: newMax
+                };
+            }
+            return t;
+        });
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
+    };
+
+    const removeToken = (id) => {
+        const nextTokens = tokens.filter(t => t.id !== id);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        if (selectedTokenId === id) setSelectedTokenId(null);
+        notifyParentState({ tokens: nextTokens });
+    };
+
+    // 👹 AI가 만든(이미지 없는) 토큰을 클릭했을 때 - 어느 토큰인지 기억해두고 숨은 파일 선택창을 연다
+    const openImagePickerFor = (tokenId) => {
+        pendingImageTokenIdRef.current = tokenId;
+        pendingImageInputRef.current?.click();
+    };
+
+    // 📷 파일 선택이 끝나면 압축해서 그 토큰의 url로 채워넣는다 (이제 일반 토큰과 동일하게 보인다)
+    const handlePendingImageChange = async (e) => {
+        const file = e.target.files?.[0];
+        const tokenId = pendingImageTokenIdRef.current;
+        e.target.value = '';
+        pendingImageTokenIdRef.current = null;
+        if (!file || tokenId === null) return;
+
+        let url;
+        try {
+            ({ url } = await acquireImage(file, 'token', 400, 0.8));
+        } catch (err) {
+            console.error('토큰 이미지 업로드 실패:', err);
+            window.alert('토큰 이미지 업로드에 실패했어요. 이미지 형식/용량을 확인하거나 잠시 후 다시 시도해주세요.');
+            return;
+        }
+        const nextTokens = tokensRef.current.map(t => t.id === tokenId ? { ...t, url } : t);
+        setTokens(nextTokens);
+        tokensRef.current = nextTokens;
+        notifyParentState({ tokens: nextTokens });
+    };
+
+    const activeMap = maps.find(m => m.id === activeMapId);
+    const selectedToken = tokens.find(t => t.id === selectedTokenId);
+    const currentGridStyle = GRID_COLORS[gridColorKey] || GRID_COLORS.amber;
+
+    // 📐 격자 표시 간격 자동 보정 - 격자를 20px처럼 작게 두고 화면 배율까지 축소하면 실제 화면에 보이는 칸 크기가
+    // 몇 픽셀 수준으로 촘촘해져서 눈이 어지러운 촘촘한 줄무늬(모아레)로 보인다. 실제 칸 크기(gridSize, 토큰
+    // 좌표 계산)는 그대로 두고, "화면에 그리는 선"만 2/4/8칸 단위로 건너뛰어 최소 시야 간격을 확보한다.
+    const gridScaleFactor = mapScale / 100;
+    const MIN_VISIBLE_GRID_PX = 22; // 화면에서 격자 한 칸이 이보다 작아지면 다음 단계로 건너뛴다
+    let gridDisplayStep = 1;
+    while (gridSize * gridScaleFactor * gridDisplayStep < MIN_VISIBLE_GRID_PX && gridDisplayStep < 64) {
+        gridDisplayStep *= 2;
+    }
+
+    return (
+        <div
+            className="flex flex-col gap-3 p-3 rounded-xl border bg-[var(--card-bg)] select-none touch-none h-full min-h-0 overflow-hidden"
+            style={{ borderColor: 'var(--border-color)' }}
+            onMouseMove={handleMove}
+            onMouseUp={handleEnd}
+            onTouchMove={handleMove}
+            onTouchEnd={handleEnd}
+        >
+            {/* 🛠️ 상단 컨트롤 바 - 모바일에서는 위치맞춤/지도이동/격자/배율/업로드 줄을 통째로 접었다 펼 수 있다 */}
+            <div className="flex flex-col gap-2 pb-2 border-b shrink-0" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-xs font-bold" style={{ color: 'var(--accent-color)' }}>
+                        🗺️ 전투 지도
+                    </h4>
+
+                    {isMobile && (
+                        <button
+                            type="button"
+                            onClick={() => setMobileControlsOpen(v => !v)}
+                            className={`text-[0.7rem] px-2.5 py-1 rounded border font-bold transition-all flex items-center gap-1 ${
+                                mobileControlsOpen
+                                    ? 'bg-amber-500 text-black border-amber-400'
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                            }`}
+                        >
+                            ⚙️ 지도 설정 {mobileControlsOpen ? '▲' : '▼'}
+                        </button>
+                    )}
+                </div>
+
+                {(!isMobile || mobileControlsOpen) && (
+                <div className="flex flex-wrap gap-2 items-center justify-between">
+                <div className="flex flex-wrap items-center gap-1.5">
+                    {/* 🎯 지도 위치 맞춤 버튼 */}
+                    <button
+                        type="button"
+                        onClick={() => setIsAlignMode(!isAlignMode)}
+                        className={`text-[0.7rem] px-2 py-0.5 rounded border font-bold transition-all ${
+                            isAlignMode 
+                                ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.6)] animate-pulse' 
+                                : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                        }`}
+                        title="격자 선에 맞춰 지도를 직접 움직입니다."
+                    >
+                        {isAlignMode ? '🎯 지도 맞춤 중 (드래그로 이동)' : '🎯 위치 맞춤'}
+                    </button>
+
+                    {/* 🔒 지도 이동 잠금 토글 */}
+                    {!isAlignMode && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsMapLocked(!isMapLocked);
+                                notifyParentState({ isMapLocked: !isMapLocked });
+                            }}
+                            className={`text-[0.7rem] px-2 py-0.5 rounded border font-bold transition-all ${
+                                isMapLocked 
+                                    ? 'bg-red-900/90 text-red-200 border-red-600 shadow-[0_0_8px_rgba(220,38,38,0.5)]' 
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                            }`}
+                        >
+                            {isMapLocked ? '🔒 지도 잠김' : '🔓 지도 이동'}
+                        </button>
+                    )}
+
+                    {/* 🔲 격자 토글 */}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setShowGrid(!showGrid);
+                            notifyParentState({ showGrid: !showGrid });
+                        }}
+                        className={`text-[0.7rem] px-2 py-0.5 rounded border transition-colors font-bold ${
+                            showGrid ? 'bg-amber-500 text-black border-amber-400' : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}
+                    >
+                        {showGrid ? '▦ 격자 켜짐' : '▢ 격자 꺼짐'}
+                    </button>
+
+                    {/* 📐 격자 크기 조절 - 드래그하거나, 위에 마우스를 올리고 휠을 굴려서 조절한다 */}
+                    {showGrid && (
+                        <div
+                            ref={gridSizeControlRef}
+                            className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-0.5 rounded border border-amber-500/40 text-xs"
+                            title="드래그하거나 마우스 휠로 격자 크기를 조절하세요"
+                        >
+                            <span className="text-[0.65rem] text-slate-400 font-bold shrink-0">격자:</span>
+                            <input
+                                type="range"
+                                min={20}
+                                max={200}
+                                step={4}
+                                value={gridSize}
+                                onChange={(e) => setGridSizeClamped(Number(e.target.value))}
+                                className="w-20 accent-amber-500 cursor-pointer"
+                            />
+                            <span className="text-[0.7rem] font-mono min-w-[36px] text-center font-bold text-amber-400 shrink-0">
+                                {gridSize}px
+                            </span>
+                            {/* 화면 배율까지 낮아 격자를 몇 칸 단위로 건너뛰어 그리고 있을 때만 안내 - 실제 칸 크기는 그대로다 */}
+                            {gridDisplayStep > 1 && (
+                                <span
+                                    className="text-[0.62rem] text-slate-400 font-bold shrink-0 whitespace-nowrap"
+                                    title="화면이 너무 촘촘해지지 않도록 격자를 몇 칸씩 묶어 표시 중입니다. 실제 칸 크기는 그대로입니다."
+                                >
+                                    ({gridDisplayStep}칸씩 표시)
+                                </span>
+                            )}
+                        </div>
+                    )}
+
+                    {/* 🎨 격자 색상 팔레트 */}
+                    {showGrid && (
+                        <div className="flex items-center gap-1 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-700 text-xs">
+                            {Object.keys(GRID_COLORS).map((key) => (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => {
+                                        setGridColorKey(key);
+                                        notifyParentState({ gridColorKey: key });
+                                    }}
+                                    className={`text-[0.65rem] px-1.5 py-0.2 rounded font-bold transition-all ${
+                                        gridColorKey === key
+                                            ? 'bg-amber-500 text-black ring-1 ring-amber-300 scale-105'
+                                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                    }`}
+                                >
+                                    {GRID_COLORS[key].name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* 🔍 지도 배율 조절 및 업로드 */}
+                <div className="flex items-center gap-1.5">
+                    {isAlignMode && (
+                        <div className="flex items-center gap-1 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/60 text-xs animate-fadeIn">
+                            <span className="text-[0.65rem] text-amber-300 font-bold mr-0.5">미세이동:</span>
+                            <button onClick={() => nudgeMapOffset(-1, 0)} className="px-1.5 py-0.2 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold text-[0.65rem]">←</button>
+                            <button onClick={() => nudgeMapOffset(1, 0)} className="px-1.5 py-0.2 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold text-[0.65rem]">→</button>
+                            <button onClick={() => nudgeMapOffset(0, -1)} className="px-1.5 py-0.2 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold text-[0.65rem]">↑</button>
+                            <button onClick={() => nudgeMapOffset(0, 1)} className="px-1.5 py-0.2 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold text-[0.65rem]">↓</button>
+                            <button
+                                onClick={() => { setMapOffset({ x: 0, y: 0 }); notifyParentState({ mapOffset: { x: 0, y: 0 } }); }}
+                                className="text-[0.6rem] px-1 bg-amber-900 hover:bg-amber-800 text-amber-200 rounded font-bold ml-1"
+                            >
+                                초기화
+                            </button>
+                        </div>
+                    )}
+
+                    <div className="flex items-center gap-1 bg-slate-900/80 px-2 py-0.5 rounded border border-slate-700 text-xs">
+                        <button onClick={() => handleZoom(-10)} className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded font-bold">-</button>
+                        <span className="text-[0.72rem] font-mono min-w-[36px] text-center font-bold text-amber-400">{mapScale}%</span>
+                        <button onClick={() => handleZoom(10)} className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded font-bold">+</button>
+                        <button onClick={resetMapView} className="text-[0.65rem] px-1.5 py-0.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold" title="원위치 리셋">🔄</button>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                        {/* 👹 AI(GM)가 token_spawns로 만든, 아직 이미지가 없는 토큰용 - 지도에서 그 토큰을
+                            클릭하면 openImagePickerFor()가 이 숨은 입력을 대신 열어준다. 화면에는 보이지 않는다. */}
+                        <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            ref={pendingImageInputRef}
+                            onChange={handlePendingImageChange}
+                        />
+
+                        {canUploadMap ? (
+                            <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded bg-[var(--primary-color,#4a5568)] text-white hover:opacity-90">
+                                <span>➕ 지도</span>
+                                <input type="file" accept="image/*" multiple className="hidden" onChange={handleMapUpload} />
+                            </label>
+                        ) : (
+                            // 🤝 협동 세션에서 방장이 아니면 지도 배경은 올릴 수 없다(다른 조작은 그대로 가능)
+                            <span
+                                className="text-[0.75rem] font-bold px-2 py-1 rounded border border-slate-700 bg-slate-900/60 text-slate-500"
+                                title="지도 업로드는 방장만 할 수 있어요"
+                            >
+                                🔒 지도(방장 전용)
+                            </span>
+                        )}
+
+                        <label className="cursor-pointer text-[0.75rem] font-bold px-2 py-1 rounded text-white hover:opacity-90" style={{ backgroundColor: 'var(--highlight,#8b5cf6)' }}>
+                            <span>🎭 토큰</span>
+                            <input type="file" accept="image/*" multiple className="hidden" onChange={handleTokenUpload} />
+                        </label>
+
+                        {/* 📍 장소 핀 찍기 - 지도 위 원하는 지점을 클릭해 이름표(예: "동굴 입구")를 붙인다.
+                            AI GM이 이 이름을 그대로 좌표로 인식하므로, 그림만 있고 아직 언급된 적 없는
+                            장소도 여기서 한 번 찍어두면 이후 대화에서 100% 정확하게 참조된다. */}
+                        <button
+                            type="button"
+                            onClick={() => setIsPinMode(v => !v)}
+                            className={`text-[0.75rem] font-bold px-2 py-1 rounded border transition-all ${
+                                isPinMode
+                                    ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.6)] animate-pulse'
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                            }`}
+                            title="지도를 클릭해 장소 이름표(핀)를 놓습니다. AI GM이 이 이름으로 위치를 정확히 인식합니다."
+                        >
+                            {isPinMode ? '📍 핀 찍는 중 (지도 클릭)' : '📍 핀 찍기'}
+                        </button>
+                    </div>
+                </div>
+                </div>
+                )}
+            </div>
+
+            {/* 🗂️ 지도 목록(탭) - 여러 장을 올려둔 경우 여기서 전환/이름수정/삭제한다. 설정 줄과 달리 플레이 중에도 자주 쓰이므로 모바일 접힘과 무관하게 항상 보여준다. */}
+            {maps.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 shrink-0">
+                    {maps.map((m) => (
+                        <div
+                            key={m.id}
+                            onClick={() => switchActiveMap(m.id)}
+                            className={`flex items-center gap-1 shrink-0 pl-2 pr-1 py-1 rounded-lg border text-[0.7rem] font-bold cursor-pointer transition-all ${
+                                activeMapId === m.id
+                                    ? 'bg-amber-500 text-black border-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                            }`}
+                            title={m.name}
+                        >
+                            <span className="truncate max-w-[90px]">🗺️ {m.name || '지도'}</span>
+                            {canUploadMap && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            renameMap(m.id, m.name);
+                                        }}
+                                        className="text-[0.68rem] px-1 rounded hover:bg-black/20 leading-none"
+                                        title="지도 이름 수정"
+                                    >
+                                        ✏️
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (window.confirm(`"${m.name}" 지도를 삭제할까요?`)) removeMap(m.id);
+                                        }}
+                                        className="text-[0.68rem] px-1 rounded hover:bg-black/20 leading-none"
+                                        title="지도 삭제"
+                                    >
+                                        ✕
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* 🎮 메인 전투 지도 뷰포트 */}
+            <div
+                ref={boardRef}
+                onMouseDown={handleBoardStart}
+                onTouchStart={handleBoardStart}
+                className={`relative w-full flex-1 min-h-0 rounded-lg overflow-hidden border flex items-center justify-center bg-slate-950 ${
+                    isPinMode
+                        ? 'cursor-crosshair border-amber-500/80'
+                        : isAlignMode
+                            ? 'cursor-move border-amber-500/80'
+                            : (isMapLocked ? 'cursor-default' : (isPanning ? 'cursor-grabbing' : 'cursor-grab'))
+                }`}
+                style={{ borderColor: (isPinMode || isAlignMode) ? '#f59e0b' : 'var(--border-color)' }}
+            >
+                {/* 🖼️ 1. 배경 지도 - 확대/축소·이동은 이 레이어의 transform으로만 처리한다 */}
+                <div
+                    className="absolute inset-0 select-none"
+                    style={{
+                        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapScale / 100})`,
+                        transformOrigin: '0 0',
+                        transition: (isPanning || pinchRef.current.active) ? 'none' : 'transform 0.1s ease-out'
+                    }}
+                >
+                    {activeMap ? (
+                        <div
+                            className="absolute left-0 top-0 transition-none pointer-events-none"
+                            style={{ transform: `translate(${mapOffset.x}px, ${mapOffset.y}px)` }}
+                        >
+                            <img src={activeMap.url} alt={activeMap.name} className="max-w-none block select-none opacity-90" />
+                        </div>
+                    ) : (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-xs text-[var(--text-muted)]">
+                            <p className="font-bold mb-1">🗺️ 등록된 지도가 없습니다.</p>
+                            <p className="text-[0.7rem]">상단 [➕ 지도]를 눌러 이미지 파일을 업로드해 주세요.</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* ▦ 2. 격자 오버레이 - map/token 레이어처럼 transform:scale()로 함께 축소시키면, 브라우저가 래스터화된
+                    1.5px 격자선을 축소 렌더링(민입/앨리어싱)하는 과정에서 표본 지점이 선과 선 사이 투명한 틈에 걸려
+                    격자 전체가 통째로 사라지는 문제가 있다(지도를 일정 크기 이하로 축소했을 때 보고된 현상).
+                    그래서 격자만 transform 밖으로 빼고, 같은 pan/zoom 결과를 backgroundPosition/backgroundSize로 직접
+                    계산해 항상 실제 화면 픽셀 두께(1.5px)로 그린다 - 배율과 무관하게 선이 얇아질 뿐 사라지지는 않는다.
+                    여기에 gridDisplayStep(위에서 계산)을 곱해, 격자가 너무 촘촘해지면 자동으로 2/4/8칸 단위로
+                    건너뛰어 그려서 눈이 어지러운 모아레 줄무늬가 되는 것을 막는다. */}
+                {showGrid && (
+                    <div
+                        className="absolute inset-0 pointer-events-none z-10"
+                        style={{
+                            backgroundImage: `
+                                linear-gradient(to right, ${currentGridStyle.line} 1.5px, transparent 1.5px),
+                                linear-gradient(to bottom, ${currentGridStyle.line} 1.5px, transparent 1.5px)
+                            `,
+                            backgroundSize: `${gridSize * gridScaleFactor * gridDisplayStep}px ${gridSize * gridScaleFactor * gridDisplayStep}px`,
+                            backgroundPosition: `${panOffset.x}px ${panOffset.y}px`,
+                            filter: `drop-shadow(0px 0px 1px ${currentGridStyle.shadow})`,
+                            transition: (isPanning || pinchRef.current.active) ? 'none' : 'background-position 0.1s ease-out, background-size 0.1s ease-out'
+                        }}
+                    />
+                )}
+
+                {/* 🎭 3. 토큰 레이어 - 지도와 같은 transform을 적용해 함께 움직이되, 격자보다 나중(위)에 그려 항상 격자 위에 보이게 한다 */}
+                <div
+                    className="absolute inset-0 select-none z-20"
+                    style={{
+                        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${mapScale / 100})`,
+                        transformOrigin: '0 0',
+                        transition: (isPanning || pinchRef.current.active) ? 'none' : 'transform 0.1s ease-out'
+                    }}
+                >
+                    {tokens.map((token) => {
+                        const isSelected = selectedTokenId === token.id;
+                        const size = token.size ?? gridSize;
+                        const maxHp = token.maxHp ?? 30;
+                        const hp = token.hp ?? maxHp;
+                        const hpPercent = maxHp > 0 ? Math.round((hp / maxHp) * 100) : 0;
+
+                        return (
+                            <div
+                                key={token.id}
+                                onMouseDown={(e) => handleTokenStart(e, token)}
+                                onTouchStart={(e) => handleTokenStart(e, token)}
+                                onClick={(e) => {
+                                    if (!isAlignMode) {
+                                        e.stopPropagation();
+                                        if (!dragRef.current.isDragging) {
+                                            setSelectedTokenId(prev => (prev === token.id ? null : token.id));
+                                            // 👹 AI가 이미지 없이 생성한 토큰(핀 제외)을 클릭하면 곧바로
+                                            // 이미지 선택창을 띄운다 - "누르면 이미지를 넣는다"는 흐름
+                                            if (!token.isPin && !token.url) {
+                                                openImagePickerFor(token.id);
+                                            }
+                                        }
+                                    }
+                                }}
+                                className="absolute cursor-grab active:cursor-grabbing z-20"
+                                style={{
+                                    left: `${token.x}px`,
+                                    top: `${token.y}px`,
+                                    width: `${size}px`,
+                                    height: `${size}px`
+                                }}
+                            >
+                                {/* HP 바 - 핀(장소 표식)은 HP 개념이 없으므로 생략 */}
+                                {!token.isPin && (
+                                    <div className="absolute -top-2.5 left-0 w-full h-1.5 bg-black/80 rounded-full overflow-hidden border border-slate-700">
+                                        <div className="h-full bg-emerald-500 transition-all" style={{ width: `${hpPercent}%` }} />
+                                    </div>
+                                )}
+
+                                {/* 토큰 이미지 / 핀(장소 표식) 마커 / AI가 만든 이미지 없는 토큰 플레이스홀더 */}
+                                {token.isPin ? (
+                                    <div className={`w-full h-full rounded-full flex items-center justify-center bg-violet-950/90 text-[0.9em] ${
+                                        isSelected
+                                            ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
+                                            : 'border-2 border-violet-400/80 hover:border-violet-300'
+                                    }`}>
+                                        📍
+                                    </div>
+                                ) : token.url ? (
+                                    <div className={`w-full h-full rounded-full ${
+                                        isSelected
+                                            ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
+                                            : 'border-2 border-amber-500/70 hover:border-amber-400'
+                                    }`}>
+                                        <img src={token.url} alt={token.name} className="w-full h-full object-cover rounded-full pointer-events-none" />
+                                    </div>
+                                ) : (
+                                    // 👹 GM(AI)이 방금 만든 토큰 - 이미지가 아직 없다. 클릭하면 바로 사진을 넣을 수 있다.
+                                    <div className={`w-full h-full rounded-full flex items-center justify-center bg-red-950/80 border-2 border-dashed animate-pulse ${
+                                        isSelected
+                                            ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-105 border-amber-400'
+                                            : 'border-red-400/80 hover:border-red-300'
+                                    }`} title="클릭해서 이미지 넣기">
+                                        <span className="text-[0.85em]">➕🖼️</span>
+                                    </div>
+                                )}
+
+                                {/* 실시간 좌표 라벨 */}
+                                {!isSelected && (
+                                    <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[0.6rem] text-slate-200 bg-black/90 px-1 rounded whitespace-nowrap pointer-events-none">
+                                        {token.name} <span className="text-amber-400 font-bold font-mono">({token.gridPos || 'A1'})</span>
+                                        {!token.isPin && !token.url && <span className="text-red-400 font-bold"> 이미지 필요</span>}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+
+                {/* 🎛️ 선택된 토큰 하단 컨트롤 시트 */}
+                {selectedToken && !isAlignMode && (
+                    <div
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onTouchStart={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute bottom-2 left-2 right-2 z-50 bg-slate-900/95 text-white rounded-xl p-2.5 border-2 border-amber-500/80 shadow-2xl max-w-md mx-auto flex flex-col gap-2"
+                    >
+                        <div className="flex items-center justify-between border-b border-slate-700/80 pb-1.5">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-amber-300">{selectedToken.name}</span>
+                                <button
+                                    onClick={() => renameToken(selectedToken.id, selectedToken.name)}
+                                    className="text-[0.68rem] px-1 rounded hover:bg-white/10 leading-none"
+                                    title="이름 수정"
+                                >
+                                    ✏️
+                                </button>
+                                <span className="text-[0.68rem] bg-amber-950 text-amber-400 px-1.5 py-0.5 rounded border border-amber-800 font-mono font-bold">
+                                    좌표: {selectedToken.gridPos || 'A1'}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <button onClick={() => removeToken(selectedToken.id)} className="px-2 py-0.5 text-[0.68rem] bg-red-600/80 hover:bg-red-600 text-white font-bold rounded">🗑️ 삭제</button>
+                                <button onClick={() => setSelectedTokenId(null)} className="px-2 py-0.5 text-[0.68rem] bg-slate-800 text-slate-300 rounded border border-slate-700">✖️ 닫기</button>
+                            </div>
+                        </div>
+
+                        {/* 👹 AI가 만든, 아직 이미지 없는 토큰 - 지도에서 바로 클릭해도 열리지만
+                            여기서도 눌러서 이미지를 넣을 수 있게 한 번 더 노출한다 */}
+                        {!selectedToken.isPin && !selectedToken.url && (
+                            <button
+                                onClick={() => openImagePickerFor(selectedToken.id)}
+                                className="text-[0.72rem] font-bold px-2 py-1.5 rounded border border-dashed border-red-400/80 bg-red-950/60 text-red-200 hover:bg-red-900/60 animate-pulse"
+                            >
+                                🖼️ 이 토큰에 이미지 넣기
+                            </button>
+                        )}
+
+                        {selectedToken.isPin ? (
+                            // 📍 핀(장소 표식)은 HP/크기 개념이 없으므로 위치 안내만 보여준다.
+                            // AI GM은 이 이름을 그대로 지도상 위치 참조로 사용한다.
+                            <div className="text-[0.68rem] text-slate-400 px-1 pb-0.5">
+                                📍 이 표식은 GM 채팅에서 "{selectedToken.name}"(으)로 언급되면 여기 좌표를 가리키는 데 쓰입니다. 드래그로 위치를 옮길 수 있습니다.
+                            </div>
+                        ) : (
+                        <div className="grid grid-cols-2 gap-2 text-[0.7rem]">
+                            {/* ❤️ HP 설정 칸 (직접 입력 input 포함) */}
+                            <div className="flex flex-col gap-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-slate-400 font-bold">❤️ HP 설정</span>
+                                    <div className="flex items-center gap-1 font-mono">
+                                        <input
+                                            type="number"
+                                            value={selectedToken.hp ?? 30}
+                                            onChange={(e) => handleHpDirectChange(selectedToken.id, 'hp', e.target.value)}
+                                            className="w-11 text-center bg-slate-900 text-amber-300 border border-amber-500/50 rounded text-[0.7rem] font-bold p-0.5 focus:outline-none focus:border-amber-400"
+                                            title="현재 HP 직접 입력"
+                                        />
+                                        <span className="text-slate-500 font-bold">/</span>
+                                        <input
+                                            type="number"
+                                            value={selectedToken.maxHp ?? 30}
+                                            onChange={(e) => handleHpDirectChange(selectedToken.id, 'maxHp', e.target.value)}
+                                            className="w-11 text-center bg-slate-900 text-slate-300 border border-slate-700 rounded text-[0.7rem] font-bold p-0.5 focus:outline-none focus:border-slate-500"
+                                            title="최대 HP 직접 입력"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-4 gap-1 font-bold mt-1">
+                                    <button onClick={() => changeTokenHp(selectedToken.id, -5)} className="py-1 rounded bg-red-950 border border-red-800 text-red-200 hover:bg-red-900">-5</button>
+                                    <button onClick={() => changeTokenHp(selectedToken.id, -1)} className="py-1 rounded bg-red-950 border border-red-800 text-red-200 hover:bg-red-900">-1</button>
+                                    <button onClick={() => changeTokenHp(selectedToken.id, 1)} className="py-1 rounded bg-emerald-950 border border-emerald-800 text-emerald-200 hover:bg-emerald-900">+1</button>
+                                    <button onClick={() => changeTokenHp(selectedToken.id, 5)} className="py-1 rounded bg-emerald-950 border border-emerald-800 text-emerald-200 hover:bg-emerald-900">+5</button>
+                                </div>
+                            </div>
+
+                            {/* 📏 크기 조절 칸 */}
+                            <div className="flex flex-col gap-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800">
+                                <div className="flex items-center justify-between text-slate-400 font-bold">
+                                    <span>📏 크기 조절</span>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={() => changeTokenSize(selectedToken.id, -4)} className="px-1.5 py-0.5 bg-slate-800 text-amber-300 rounded border border-slate-700">-</button>
+                                        <span className="text-amber-300 font-mono">{selectedToken.size ?? gridSize}px</span>
+                                        <button onClick={() => changeTokenSize(selectedToken.id, 4)} className="px-1.5 py-0.5 bg-slate-800 text-amber-300 rounded border border-slate-700">+</button>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1 font-bold mt-1">
+                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 1)} className="py-1 rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700">1칸</button>
+                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 2)} className="py-1 rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700">2칸</button>
+                                    <button onClick={() => setTokenPresetSize(selectedToken.id, 3)} className="py-1 rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700">3칸</button>
+                                </div>
+                            </div>
+                        </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default BattleMapPanel;

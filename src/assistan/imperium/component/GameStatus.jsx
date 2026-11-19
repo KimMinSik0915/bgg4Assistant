@@ -3,6 +3,7 @@ import PlayerGameState from "./PlayerGameStatus";
 import {Button} from "../util/Util";
 import withNavigate from "../../utils/withNavigate";
 import GameSetup from "./GameSetup";
+import {ArrowLeft, Swords, Trophy} from "lucide-react";
 
 class GameStatus extends Component {
 
@@ -58,14 +59,30 @@ class GameStatus extends Component {
 
     render() {
         return(
-            <>
-                <div className="container mx-auto p-4" style={{backgroundColor: '#d9d9f2'}}>
-                    <h1
-                        className="text-xl sm:text-2xl font-bold mb-4 text-indigo-800 cursor-pointer"
+            <div className="relative bg-[#0a0118]">
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                    <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-purple-500/10 blur-[120px]" />
+                    <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-violet-600/10 blur-[120px]" />
+                </div>
+
+                <div className="relative container mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
+                    <button
                         onClick={this.props.handler.returnToSetup}
+                        className="mb-6 flex items-center gap-1.5 text-sm text-slate-400 transition hover:text-purple-300"
                     >
-                        임페리움:레전드
-                    </h1>
+                        <ArrowLeft size={16}/> 설정으로
+                    </button>
+
+                    <div className="mb-8 flex items-center gap-3">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-400/20 to-violet-500/20 ring-1 ring-white/10">
+                            <Swords className="h-5 w-5 text-purple-300"/>
+                        </div>
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-widest text-purple-400/70">게임 진행 중</p>
+                            <h1 className="text-xl font-bold text-white sm:text-2xl">임페리움: 레전드</h1>
+                        </div>
+                    </div>
+
                     {this.state.players.map((player, index) => (
                         <PlayerGameState
                             key={index}
@@ -75,15 +92,20 @@ class GameStatus extends Component {
                             onSettingsAction={this.handler.setting}
                         />
                     ))}
+
                     <Button
-                        onClick={this.calculateScore}
+                        onClick={this.handler.calculateScore}
                         disabled={!this.state.canCalculateScore}
-                        className={`mt-4 w-full ${this.state.canCalculateScore ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-400'} text-white`}
+                        className={`mt-2 w-full gap-2 py-3.5 text-base shadow-lg ${
+                            this.state.canCalculateScore
+                                ? 'bg-gradient-to-r from-emerald-400 to-purple-400 text-[#0a0118] shadow-emerald-500/20 hover:brightness-110'
+                                : 'bg-white/10 text-slate-500'
+                        }`}
                     >
-                        점수 계산
+                        <Trophy size={18}/> 점수 계산
                     </Button>
                 </div>
-            </>
+            </div>
         )
     }
 

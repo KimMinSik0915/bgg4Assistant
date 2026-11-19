@@ -2,9 +2,12 @@
  * @Author : 김민식
  * SkillsCard : 숙련된 기술 목록 및 판정 굴림
  */
-const SkillsCard = ({ skills, onRollCheck }) => {
+const SkillsCard = ({ skills, onRollCheck, isRolling }) => {
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)]" style={{ borderColor : 'var(--border-color)' }}>
+        <div
+            className={`p-3.5 rounded-xl border bg-[var(--card-bg)] transition-opacity ${isRolling ? 'opacity-50 pointer-events-none' : ''}`}
+            style={{ borderColor : 'var(--border-color)' }}
+        >
             <div
                 className="text-base font-bold pb-1.5 mb-3 flex justify-between border-b-2"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}

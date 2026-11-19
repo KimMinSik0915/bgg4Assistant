@@ -7,9 +7,17 @@ const SpellsAndFeaturesCard = ({
     specialFeatures, usedFeatures, onToggleUsed
   , spellSlots, usedSpellSlots, onToggleSpellSlot
   , cantrips, preparedSpells, onRollSpell
+  , isRolling
 }) => {
+    // 남은 1레벨 슬롯이 있는지 계산 - 다 썼으면 준비된 주문 카드를 살짝 흐리게 표시해준다
+    const usedSlotCount = Object.values(usedSpellSlots || {}).filter(Boolean).length;
+    const noSlotsLeft = spellSlots > 0 && usedSlotCount >= spellSlots;
+
     return (
-        <div className="p-3.5 rounded-xl border bg-[var(--card-bg)]" style={{ borderColor : 'var(--border-color)' }}>
+        <div
+            className={`p-3.5 rounded-xl border bg-[var(--card-bg)] transition-opacity ${isRolling ? 'opacity-50 pointer-events-none' : ''}`}
+            style={{ borderColor : 'var(--border-color)' }}
+        >
             <div
                 className="text-base font-bold pb-1.5 mb-3 border-b-2"
                 style={{ color : 'var(--accent-color)', borderColor : 'var(--border-color)' }}
@@ -21,7 +29,7 @@ const SpellsAndFeaturesCard = ({
                 <div
                     key={i}
                     className="rounded-md p-2 mb-2 border"
-                    style={{ backgroundColor : 'rgba(139,92,246,0.08)', borderColor : 'var(--highlight)' }}
+                    style={{ backgroundColor : 'rgba(34,211,238,0.08)', borderColor : 'var(--highlight)' }}
                 >
                     <div className="flex justify-between items-center mb-1">
                         <strong className="text-sm" style={{ color : 'var(--highlight)' }}>{f.name}</strong>
@@ -37,10 +45,10 @@ const SpellsAndFeaturesCard = ({
             {spellSlots > 0 && (
                 <div
                     className="mb-3 rounded-lg p-2"
-                    style={{ backgroundColor : 'rgba(139,92,246,0.1)', border : '1px solid rgba(139,92,246,0.3)' }}
+                    style={{ backgroundColor : 'rgba(34,211,238,0.1)', border : '1px solid rgba(34,211,238,0.3)' }}
                 >
                     <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold" style={{ color : '#c4b5fd' }}>✨ 주문 슬롯</span>
+                        <span className="text-xs font-bold" style={{ color : '#a5f3fc' }}>✨ 주문 슬롯</span>
                         <div className="flex gap-1.5 flex-wrap justify-end">
                             {Array.from({ length : spellSlots }).map((_, i) => (
                                 <label
@@ -63,7 +71,7 @@ const SpellsAndFeaturesCard = ({
                     {cantrips.map((c, i) => (
                         <div
                             key={i}
-                            onClick={() => onRollSpell(c.name, c.dice)}
+                            onClick={() => onRollSpell(c.name, c.dice, false)}
                             className="pl-2.5 pr-2 py-2 mb-2 rounded-r-md border-l-[3px] cursor-pointer active:scale-[0.98] transition-transform bg-black/15"
                             style={{ borderColor : 'var(--accent-color)' }}
                         >
@@ -76,12 +84,15 @@ const SpellsAndFeaturesCard = ({
 
             {(preparedSpells || []).length > 0 && (
                 <div>
-                    <div className="text-xs font-bold mb-1" style={{ color : 'var(--accent-color)' }}>준비된 주문</div>
+                    <div className="text-xs font-bold mb-1 flex items-center justify-between" style={{ color : 'var(--accent-color)' }}>
+                        <span>준비된 주문</span>
+                        {noSlotsLeft && <span className="text-[0.65rem] font-normal" style={{ color : 'var(--text-muted)' }}>슬롯 소진 - 휴식 필요</span>}
+                    </div>
                     {preparedSpells.map((s, i) => (
                         <div
                             key={i}
-                            onClick={() => onRollSpell(s.name, s.dice)}
-                            className="pl-2.5 pr-2 py-2 mb-2 rounded-r-md border-l-[3px] cursor-pointer active:scale-[0.98] transition-transform bg-black/15"
+                            onClick={() => onRollSpell(s.name, s.dice, true)}
+                            className={`pl-2.5 pr-2 py-2 mb-2 rounded-r-md border-l-[3px] cursor-pointer active:scale-[0.98] transition-transform bg-black/15 ${noSlotsLeft ? 'opacity-40' : ''}`}
                             style={{ borderColor : 'var(--accent-color)' }}
                         >
                             <div className="flex justify-between items-center">

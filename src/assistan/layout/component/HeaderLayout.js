@@ -1,13 +1,18 @@
 import {Component} from "react";
-import {Box, Home, Menu, Settings, User, X} from "lucide-react";
+import {Menu, Settings, User, X} from "lucide-react";
 import {Link, NavLink} from "react-router-dom";
 import {NavigationItems} from "../resources/DataSet/NavigationItems";
 import withNavigate from "../../utils/withNavigate";
+import packageJson from "../../../../package.json";
+
+const bgg4AssistantIcoPath = "/티굴.png";
+const appVersion = packageJson.version;
 
 class HeaderLayout extends Component {
 
     state = {
         isMenuOpen : false
+      , isLoginOpen : false
     }
 
     constructor(props) {
@@ -18,64 +23,135 @@ class HeaderLayout extends Component {
         toggleMenu : () => {
             this.setState(prevState => ({
                 isMenuOpen : !prevState.isMenuOpen
+              , isLoginOpen : false
+            }));
+        }
+      , toggleLogin : () => {
+            this.setState(prevState => ({
+                isLoginOpen : !prevState.isLoginOpen
             }));
         }
       , naviClick : (path) => {
             this.setState({isMenuOpen : false});
             this.props.navigate(path);
         }
+      , closeAll : () => {
+            this.setState({isMenuOpen : false, isLoginOpen : false});
+        }
+    }
+
+    renderNavLink = ({ path, icon: Icon, text, onClick }, variant) => {
+        const desktopClass = ({ isActive }) =>
+            `flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                isActive ? 'bg-purple-400/15 text-purple-300' : 'text-slate-300 hover:bg-white/10 hover:text-white'
+            }`;
+        const mobileClass = ({ isActive }) =>
+            `flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                isActive ? 'bg-purple-400/15 text-purple-300' : 'text-slate-300 hover:bg-white/10 hover:text-white'
+            }`;
+
+        if (onClick) {
+            const className = variant === 'mobile'
+                ? 'flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-white/10 hover:text-white'
+                : 'flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium text-slate-300 transition-colors hover:bg-white/10 hover:text-white';
+            return (
+                <a key={text} href="#" className={className} onClick={onClick}>
+                    <Icon size={16}/>
+                    {text}
+                </a>
+            );
+        }
+
+        return (
+            <NavLink
+                key={path}
+                to={path}
+                onClick={this.handler.closeAll}
+                className={variant === 'mobile' ? mobileClass : desktopClass}
+            >
+                <Icon size={16}/>
+                {text}
+            </NavLink>
+        );
     }
 
     render() {
-        const { isMenuOpen} = this.state;
+        const { isMenuOpen, isLoginOpen } = this.state;
 
         return(
-            <>
-                <header className="bg-blue-600 text-white p-4">
-                    <div className="container mx-auto flex justify-between items-center">
-                      <Link to="/" className="flex items-center space-x-2 text-xl font-bold">
-                        <Box size={24} />
-                        <span>Bgg4Assistant</span>
-                      </Link>
+            <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0a0118]/80 shadow-lg shadow-black/20">
+                <div className="container mx-auto flex h-16 items-center justify-between px-4 sm:h-[70px] sm:px-6">
+                    <Link to="/" className="flex shrink-0 items-center gap-2.5" onClick={this.handler.closeAll}>
+                        <img src={bgg4AssistantIcoPath} alt="logo" className="h-9 w-9 rounded-xl ring-1 ring-white/10 sm:h-10 sm:w-10"/>
+                        <span className="bg-gradient-to-r from-purple-300 to-violet-300 bg-clip-text text-lg font-bold text-transparent sm:text-xl">
+                            Bgg4Assistant
+                        </span>
+                        <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+                            v{appVersion}
+                        </span>
+                    </Link>
 
-                      {/* 햄버거 메뉴 아이콘 (모바일) */}
-                      <button className="md:hidden" onClick={this.handler.toggleMenu}>
-                        {this.state.isMenuOpen ? <X size={24} /> : <Menu size={24} />}
-                      </button>
+                    <nav className="hidden items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1 md:flex">
+                        {NavigationItems.map((item) => this.renderNavLink(item, 'desktop'))}
+                    </nav>
 
-                      {/* 네비게이션 메뉴 */}
-                      <nav className={`${this.state.isMenuOpen ? 'block' : 'hidden'} md:block absolute md:relative top-full left-0 w-full md:w-auto bg-blue-600 md:bg-transparent`}>
-                        <ul className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-4 p-4 md:p-0">
-                            {NavigationItems.map(({ path, icon: Icon, text, onClick }) => (
-                                <li key={path}>
-                                  {onClick ? (
-                                    <a
-                                      href="#"
-                                      className="flex items-center hover:text-blue-200"
-                                      onClick={onClick}
-                                    >
-                                      <Icon size={18} className="mr-1" />
-                                      {text}
-                                    </a>
-                                  ) : (
-                                    <NavLink
-                                      to={path}
-                                      className={({ isActive }) =>
-                                        `flex items-center hover:text-blue-200 ${isActive ? 'text-blue-200 font-bold' : ''}`
-                                      }
-                                      onClick={() => this.setState({ isMenuOpen: false })}
-                                    >
-                                      <Icon size={18} className="mr-1" />
-                                      {text}
-                                    </NavLink>
-                                  )}
-                                </li>
-                            ))}
-                        </ul>
-                      </nav>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => this.handler.naviClick('/settings')}
+                            className="rounded-full p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                            title="설정"
+                            aria-label="설정"
+                        >
+                            <Settings size={18}/>
+                        </button>
+
+                        <div className="relative hidden sm:block">
+                            <button
+                                onClick={this.handler.toggleLogin}
+                                className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-purple-400 to-violet-400 px-4 py-1.5 text-sm font-semibold text-[#0a0118] shadow-md shadow-purple-500/20 transition-transform duration-200 hover:scale-105"
+                            >
+                                <User size={16}/>
+                                로그인
+                            </button>
+                            {isLoginOpen && (
+                                <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-white/10 bg-[#170a2e]/95 p-3 text-xs leading-relaxed text-slate-300 shadow-xl">
+                                    🚧 로그인 기능은 준비 중이에요. 조금만 기다려 주세요!
+                                </div>
+                            )}
+                        </div>
+
+                        <button
+                            className="rounded-lg p-2 text-slate-200 transition-colors hover:bg-white/10 md:hidden"
+                            onClick={this.handler.toggleMenu}
+                            aria-label="메뉴 열기"
+                        >
+                            {isMenuOpen ? <X size={22} /> : <Menu size={22} />}
+                        </button>
                     </div>
-                </header>
-            </>
+                </div>
+
+                <nav className={`overflow-hidden border-t border-white/10 bg-[#0a0118]/95 transition-[max-height] duration-300 ease-in-out md:hidden ${isMenuOpen ? 'max-h-96' : 'max-h-0 border-t-0'}`}>
+                    <ul className="flex flex-col gap-1 px-4 py-3">
+                        {NavigationItems.map((item) => (
+                            <li key={item.path ?? item.text}>{this.renderNavLink(item, 'mobile')}</li>
+                        ))}
+                        <li className="pt-2">
+                            <button
+                                onClick={this.handler.toggleLogin}
+                                className="flex w-full items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-purple-400 to-violet-400 px-4 py-2.5 text-sm font-semibold text-[#0a0118] shadow-md shadow-purple-500/20"
+                            >
+                                <User size={16}/>
+                                로그인
+                            </button>
+                            {isLoginOpen && (
+                                <p className="mt-2 rounded-lg border border-white/10 bg-white/5 p-3 text-xs leading-relaxed text-slate-300">
+                                    🚧 로그인 기능은 준비 중이에요. 조금만 기다려 주세요!
+                                </p>
+                            )}
+                        </li>
+                    </ul>
+                </nav>
+            </header>
         )
     }
 }

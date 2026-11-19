@@ -47,8 +47,8 @@ const HpCard = ({ hp, onChangeHp, onTakeDamage, onShortRest, onLongRest }) => {
                 >💥 피해</button>
                 <button
                     onClick={onShortRest}
-                    className="text-white border-none py-1.5 px-2.5 rounded-md font-bold text-xs bg-[#3b82f6]"
-                    style={{ flex : 1.2 }}
+                    className="text-white border-none py-1.5 px-2.5 rounded-md font-bold text-xs"
+                    style={{ flex : 1.2, backgroundColor : 'var(--highlight, #8b5cf6)' }}
                 >☕ 짧은 휴식</button>
                 <button
                     onClick={onLongRest}
